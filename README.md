@@ -36,8 +36,8 @@ The app is configured to use the Enrollment Queue Supabase project. Authenticati
 
 - Document check and orientation happen before the Step 1 ticket is issued.
 - Tickets receive their arrival number in the database, so issuance order is shared across kiosks.
-- Staff call and complete the Step 1 teacher meeting in queue order.
-- After the meeting, staff sign Brigada; room assignment is then limited to the earliest eligible ticket and uses the configured track/grade/elective mapping.
+- Step 1 consists of the teacher meeting followed by Brigada sign-off. Step 1 is complete only after both are done.
+- After Brigada, room assignment is Step 2. Staff assign rooms in eligible arrival order using the configured track/grade/elective mapping.
 - Supabase Realtime refreshes the kiosk, staff view, and public display when the queue changes.
 
 The current kiosk records document and orientation completion from the kiosk flow; the public kiosk cannot independently verify that a staff member physically checked them. The staff queue actions, room assignment, and session controls are protected by Supabase authentication and database functions.

@@ -459,8 +459,8 @@ function processStageLabel(ticket) {
   if (stage === "documents") return "Document check needed";
   if (stage === "orientation") return "Orientation needed";
   if (stage === "teacher") return ticket.status === "IN_SERVICE" ? "Teacher meeting" : ticket.status === "CALLED" ? "Proceed to teacher" : "Waiting for teacher";
-  if (stage === "brigada") return "Brigada required";
-  if (stage === "room") return "Ready for room assignment";
+  if (stage === "brigada") return "Step 1 sub-requirement · Brigada";
+  if (stage === "room") return "Ready for Step 2 · Room assignment";
   return "Enrollment complete";
 }
 
@@ -549,7 +549,7 @@ function currentTicketCard() {
     <button class="button button-secondary" data-action="start-service" ${isServing ? "disabled" : ""}>${icon("play")}${isServing ? "Meeting in progress" : "Start teacher meeting"}</button>
     <button class="button button-quiet" data-action="recall">${icon("refresh")}Recall</button>
     <button class="button button-quiet" data-action="confirm-skip" ${isServing ? "disabled" : ""}>${icon("skip")}Skip</button>
-  </div><div class="current-process"><span class="process-check done">${icon("checkmark")}Documents checked</span><span class="process-check done">${icon("checkmark")}Orientation complete</span><span class="process-current">Step 1 · Teacher meeting</span></div>${!isServing ? '<div class="current-detail">Start the teacher meeting before completing Step 1.</div>' : ""}</section>`;
+  </div><div class="current-process"><span class="process-check done">${icon("checkmark")}Documents checked</span><span class="process-check done">${icon("checkmark")}Orientation complete</span><span class="process-current">Step 1 · Teacher meeting</span></div>${!isServing ? '<div class="current-detail">After the meeting, Brigada sign-off completes Step 1.</div>' : ""}</section>`;
 }
 
 function queueRowsHtml() {
@@ -586,7 +586,7 @@ function afterTeacherPanel() {
     const label = stage === "brigada" ? "Sign Brigada" : "Assign room";
     return `<div class="after-step-row"><div class="after-step-ticket"><span class="queue-order">#${String(ticket.queueOrder).padStart(3, "0")}</span><strong>${esc(ticket.publicCode)}</strong><small>${esc(processStageLabel(ticket))}</small></div><button class="button ${canAdvance ? "button-secondary" : "button-quiet"}" data-action="${action}" data-ticket-id="${esc(ticket.id)}" ${canAdvance ? "" : "disabled"}>${canAdvance ? label : "Wait turn"}</button></div>`;
   }).join("");
-  return `<section class="panel after-step-panel"><div class="panel-head"><div><h2 class="panel-title">After the teacher meeting</h2><p class="panel-subtitle">Complete Brigada before assigning a room</p></div><span class="step-chip">Step 2</span></div><div class="after-step-list">${rows || '<div class="activity-empty">No students are waiting for Brigada or room assignment.</div>'}</div><div class="after-step-foot">${icon("info")} Sign Brigada after cleanup; assign rooms in eligible arrival order.</div></section>`;
+  return `<section class="panel after-step-panel"><div class="panel-head"><div><h2 class="panel-title">Step 1 completion &amp; Step 2 room assignment</h2><p class="panel-subtitle">Brigada sign-off completes Step 1; room assignment follows</p></div><span class="step-chip">Steps 1 &amp; 2</span></div><div class="after-step-list">${rows || '<div class="activity-empty">No students are waiting for Brigada or room assignment.</div>'}</div><div class="after-step-foot">${icon("info")} Sign Brigada to complete Step 1; assign rooms in eligible arrival order.</div></section>`;
 }
 
 function sessionCard() {
@@ -615,7 +615,7 @@ function dashboardView() {
   const waiting = teacherReadyTickets().length;
   const completed = state.tickets.filter((ticket) => ticket.status === "COMPLETED").length;
   const sessionStatusCopy = state.session.status === "ACTIVE" ? "Students can join the queue" : state.session.status === "PAUSED" ? "Ticket requests are paused" : "Ticket requests are closed";
-  const content = `<div class="page-heading"><div><p class="eyebrow">Good morning, Jordan</p><h1>Enrollment queue</h1><p class="page-subtitle">Step 1 is the teacher meeting. Document check and orientation come before ticket issue; Brigada comes before Step 2.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span><button class="button button-primary" data-action="go-ticket">${icon("add")}Get a ticket</button></div></div>
+  const content = `<div class="page-heading"><div><p class="eyebrow">Good morning, Jordan</p><h1>Enrollment queue</h1><p class="page-subtitle">Step 1 includes the teacher meeting and Brigada. Document check and orientation come before ticket issue; Step 2 is room assignment.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span><button class="button button-primary" data-action="go-ticket">${icon("add")}Get a ticket</button></div></div>
     <div class="metrics">
       <article class="metric-card"><div class="metric-top"><span>Waiting for teacher</span><span class="metric-icon">${icon("users")}</span></div><strong class="metric-value">${waiting}</strong><span class="metric-caption">${waiting ? `First up · ${esc(teacherReadyTickets()[0].publicCode)}` : "No students in line"}</span></article>
       <article class="metric-card"><div class="metric-top"><span>Served today</span><span class="metric-icon">${icon("check")}</span></div><strong class="metric-value">${completed}</strong><span class="metric-caption"><span class="metric-up">${icon("trend")} Steady progress</span></span></article>
@@ -719,12 +719,12 @@ function ticketProgressView(ticket) {
   const teacherLabel = ticket.status === "CALLED" && stage === "teacher" ? "Called to teacher" : ticket.status === "IN_SERVICE" && stage === "teacher" ? "Meeting in progress" : "Teacher meeting";
   const message = stage === "teacher"
     ? ticket.status === "CALLED" ? "Your number was called. Please go to the teacher station." : ticket.status === "IN_SERVICE" ? "Your teacher meeting is in progress." : "Wait in the Step 1 area for your number to be called."
-    : stage === "brigada" ? "After your teacher meeting, complete Brigada before going to room assignment."
-      : stage === "room" ? "Brigada is complete. You’re ready for Step 2: room assignment."
+    : stage === "brigada" ? "After your teacher meeting, complete the Step 1 Brigada sign-off. Then proceed to Step 2 room assignment."
+      : stage === "room" ? "Step 1 is complete. You’re ready for Step 2: room assignment."
         : stage === "done" ? "Room assigned. Your enrollment steps are complete."
           : "Complete the remaining preparation requirement before requesting a ticket.";
   const item = (label, key, complete, currentLabel = "Current") => `<li class="ticket-progress-item ${stateClass(key, complete)}"><span class="ticket-progress-mark">${complete ? icon("checkmark") : icon(key === stage ? "clock" : "caret")}</span><span>${label}</span><small>${complete ? "Complete" : key === stage ? currentLabel : "Upcoming"}</small></li>`;
-  return `<section class="ticket-progress" aria-label="Enrollment progress"><div class="ticket-progress-head"><div><small>YOUR CURRENT STEP</small><strong>${esc(processStageLabel(ticket))}</strong></div><span class="ticket-progress-code">${icon("queue")} #${String(ticket.queueOrder).padStart(3, "0")}</span></div><p class="ticket-progress-message">${message}</p>${ticket.roomLabel ? `<p class="ticket-progress-message"><strong>Assigned room:</strong> ${esc(ticket.roomLabel)}</p>` : ""}<div class="ticket-progress-grid"><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 1 · TEACHER MEETING</span><ul>${item("Documents checked", "documents", Boolean(progress.documentsChecked))}${item("Orientation video", "orientation", Boolean(progress.orientationComplete))}${item(teacherLabel, "teacher", Boolean(progress.teacherComplete), ticket.status === "WAITING" ? "Waiting" : "Proceed")}</ul></div><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 2 · ROOM ASSIGNMENT</span><ul>${item("Brigada sign-off", "brigada", Boolean(progress.brigadaComplete), "Required now")}${item("Room assignment", "room", Boolean(progress.roomAssigned), "Ready")}</ul></div></div></section>`;
+  return `<section class="ticket-progress" aria-label="Enrollment progress"><div class="ticket-progress-head"><div><small>YOUR CURRENT STEP</small><strong>${esc(processStageLabel(ticket))}</strong></div><span class="ticket-progress-code">${icon("queue")} #${String(ticket.queueOrder).padStart(3, "0")}</span></div><p class="ticket-progress-message">${message}</p>${ticket.roomLabel ? `<p class="ticket-progress-message"><strong>Assigned room:</strong> ${esc(ticket.roomLabel)}</p>` : ""}<div class="ticket-progress-grid"><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 1 · TEACHER MEETING + BRIGADA</span><ul>${item("Documents checked", "documents", Boolean(progress.documentsChecked))}${item("Orientation video", "orientation", Boolean(progress.orientationComplete))}${item(teacherLabel, "teacher", Boolean(progress.teacherComplete), ticket.status === "WAITING" ? "Waiting" : "Proceed")}${item("Brigada sign-off", "brigada", Boolean(progress.brigadaComplete), "Required to finish Step 1")}</ul></div><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 2 · ROOM ASSIGNMENT</span><ul>${item("Room assignment", "room", Boolean(progress.roomAssigned), "Ready")}</ul></div></div></section>`;
 }
 
 function kioskTicketResult(ticket) {
@@ -906,7 +906,7 @@ function completeAndCallNext() {
   if (cloudMode) {
     const completedCode = currentTicket()?.publicCode || "Ticket";
     return runRemoteAction("complete_teacher").then((ok) => {
-      if (ok) showToast(`${completedCode} finished Step 1${currentTicket() ? `. ${currentTicket().publicCode} is next.` : " and can continue to Brigada."}`);
+      if (ok) showToast(`${completedCode} completed the teacher meeting. Brigada is still required to finish Step 1.${currentTicket() ? ` ${currentTicket().publicCode} is next.` : ""}`);
     });
   }
   const ticket = currentTicket();
@@ -926,7 +926,7 @@ function completeAndCallNext() {
     recordEvent("TICKET_CALLED", next.publicCode);
   }
   persistState();
-  showToast(next ? `${ticket.publicCode} finished Step 1. ${next.publicCode} is next.` : `${ticket.publicCode} finished Step 1 and can continue to Brigada.`);
+  showToast(`${ticket.publicCode} completed the teacher meeting. Brigada is still required to finish Step 1.${next ? ` ${next.publicCode} is next.` : ""}`);
 }
 
 function advancePostTeacherStage(ticketId, stage) {
@@ -937,7 +937,7 @@ function advancePostTeacherStage(ticketId, stage) {
     return runRemoteAction(action, ticketId).then((ok) => {
       if (!ok) return;
       const updated = state.tickets.find((item) => item.id === ticketId);
-      showToast(stage === "brigada" ? `${code} has completed Brigada and is ready for room assignment.` : `${code} is assigned to ${updated?.roomLabel || "its room"}.`);
+      showToast(stage === "brigada" ? `${code} completed Brigada. Step 1 is complete; the ticket is ready for Step 2 room assignment.` : `${code} is assigned to ${updated?.roomLabel || "its room"}.`);
     });
   }
   const ticket = state.tickets.find((item) => item.id === ticketId);
@@ -948,7 +948,7 @@ function advancePostTeacherStage(ticketId, stage) {
     ticket.progress.brigadaCompletedAt = new Date().toISOString();
     recordEvent("BRIGADA_COMPLETED", ticket.publicCode);
     persistState();
-    return showToast(`${ticket.publicCode} has completed Brigada and is ready for room assignment.`);
+    return showToast(`${ticket.publicCode} completed Brigada. Step 1 is complete; the ticket is ready for Step 2 room assignment.`);
   }
   if (stage === "room") {
     ticket.progress.roomAssigned = true;
