@@ -5,8 +5,8 @@ A responsive enrollment queue app with a student ticket kiosk, staff queue dashb
 ## Design documents
 
 - [Editable Draw.io diagrams](./docs/enrollment-system-diagrams.drawio) — architecture, student flow, staff flow, and admin flow pages.
-- [Figma wireframe import sheet](./docs/enrollment-wireframes-figma.svg) — editable vector artwork for the Figma canvas.
-- [Wireframe preview](./docs/wireframes.html)
+- [Low-fidelity sketch wireframes](./docs/enrollment-wireframes-figma.svg) — editable vector artwork for the Figma canvas, covering all 16 student, public display, staff, admin, and error screens.
+- [Wireframe preview](./docs/wireframes.html) · [SVG generator](./docs/generate_wireframes.py)
 - [Architecture notes and flow descriptions](./docs/SYSTEM_ARCHITECTURE_AND_FLOWS.md)
 
 ## Supabase connection setup
