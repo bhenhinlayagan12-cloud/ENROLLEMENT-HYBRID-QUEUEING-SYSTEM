@@ -2,6 +2,13 @@
 
 A responsive enrollment queue app with a student ticket kiosk, staff queue dashboard, admin session controls, and public display. It can run as a local demo or use one shared Supabase database so separate devices see the same queue.
 
+## Design documents
+
+- [Editable Draw.io diagrams](./docs/enrollment-system-diagrams.drawio) — architecture, student flow, staff flow, and admin flow pages.
+- [Figma wireframe import sheet](./docs/enrollment-wireframes-figma.svg) — editable vector artwork for the Figma canvas.
+- [Wireframe preview](./docs/wireframes.html)
+- [Architecture notes and flow descriptions](./docs/SYSTEM_ARCHITECTURE_AND_FLOWS.md)
+
 ## Supabase connection setup
 
 The app is configured to use the Enrollment Queue Supabase project. Authentication links return to `http://localhost:4173/?view=password` so staff can set a password before signing in. For a different Supabase project, follow these setup steps.
