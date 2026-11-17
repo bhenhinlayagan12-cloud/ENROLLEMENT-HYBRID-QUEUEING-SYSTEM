@@ -4,7 +4,7 @@ A responsive enrollment queue app with a student ticket kiosk, staff queue dashb
 
 ## Supabase connection setup
 
-The app is ready to connect, but it will stay in local-demo mode until a Supabase project URL and publishable key are entered.
+The app is configured to use the Enrollment Queue Supabase project. Authentication links return to `http://localhost:4173/?view=password` so staff can set a password before signing in. For a different Supabase project, follow these setup steps.
 
 1. Create a dedicated Supabase project for this enrollment app.
 2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the queue tables, RLS policies, ticket-issuing and staff-action functions, and live-update publication entries.

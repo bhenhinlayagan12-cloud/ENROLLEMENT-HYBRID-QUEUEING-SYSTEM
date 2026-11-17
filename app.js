@@ -1,5 +1,5 @@
 const STORAGE_KEY = "enroll-queue-demo-v1";
-const VIEW_NAMES = { dashboard: "Queue dashboard", ticket: "Get a ticket", display: "Public display", admin: "Admin console", setup: "Session setup" };
+const VIEW_NAMES = { dashboard: "Queue dashboard", ticket: "Get a ticket", display: "Public display", admin: "Admin console", setup: "Session setup", password: "Set staff password" };
 const iconNames = {
   dashboard: "ph-squares-four", ticket: "ph-ticket", display: "ph-monitor-play", admin: "ph-shield-check", setup: "ph-sliders-horizontal",
   add: "ph-plus", arrow: "ph-arrow-right", search: "ph-magnifying-glass", clock: "ph-clock", users: "ph-users-three",
@@ -297,7 +297,14 @@ function staffAuthView() {
   const restricted = signedInWithoutRole || adminOnly;
   const title = signedInWithoutRole ? "Staff access is not assigned" : adminOnly ? "Administrator access is required" : "Sign in to manage the queue";
   const copy = signedInWithoutRole ? "This account is signed in, but it has no staff role in the enrollment database. Ask an administrator to add it." : adminOnly ? "Your staff account can work the queue, but only an administrator can manage session settings." : "Use your school staff account. The student kiosk and public display do not require staff sign-in.";
-  return `<main class="cloud-gate"><section class="view-card cloud-gate-card"><span class="cloud-gate-icon">${icon("lock")}</span><p class="eyebrow">Staff access</p><h1>${title}</h1><p>${copy}</p>${restricted ? `<button class="button button-secondary" data-action="staff-sign-out">Sign out</button>` : `<form class="cloud-login-form" id="staff-login-form"><label for="staff-email">Staff email</label><input id="staff-email" name="email" type="email" autocomplete="username" required /><label for="staff-password">Password</label><input id="staff-password" name="password" type="password" autocomplete="current-password" required /><p class="cloud-login-error" id="cloud-login-error" role="alert"></p><button class="button button-primary" type="submit">${icon("lock")}Sign in</button></form>`}</section></main>`;
+  return `<main class="cloud-gate"><section class="view-card cloud-gate-card"><span class="cloud-gate-icon">${icon("lock")}</span><p class="eyebrow">Staff access</p><h1>${title}</h1><p>${copy}</p>${restricted ? `<button class="button button-secondary" data-action="staff-sign-out">Sign out</button>` : `<form class="cloud-login-form" id="staff-login-form"><label for="staff-email">Staff email</label><input id="staff-email" name="email" type="email" autocomplete="username" required /><label for="staff-password">Password</label><input id="staff-password" name="password" type="password" autocomplete="current-password" required /><p class="cloud-login-error" id="cloud-login-error" role="alert"></p><button class="button button-primary" type="submit">${icon("lock")}Sign in</button><button class="button button-quiet" type="button" data-action="send-password-link">Send password setup link</button></form>`}</section></main>`;
+}
+
+function passwordSetupView() {
+  const content = remoteAuthSession
+    ? `<span class="cloud-gate-icon">${icon("lock")}</span><p class="eyebrow">Staff account</p><h1>Set your password</h1><p>Create a password for ${esc(remoteAuthSession.user?.email || "your staff account")} to use when signing in.</p><form class="cloud-login-form" id="password-setup-form"><label for="new-staff-password">New password</label><input id="new-staff-password" name="password" type="password" autocomplete="new-password" minlength="8" required /><label for="confirm-staff-password">Confirm password</label><input id="confirm-staff-password" name="confirmation" type="password" autocomplete="new-password" minlength="8" required /><p class="cloud-login-error" id="password-setup-error" role="alert"></p><button class="button button-primary" type="submit">Save password</button></form>`
+    : `<span class="cloud-gate-icon">${icon("warning")}</span><p class="eyebrow">Staff account</p><h1>This link is expired or already used</h1><p>Return to staff sign-in and request a fresh password setup link.</p><button class="button button-primary" data-action="password-back">${icon("leftArrow")}Go to staff sign-in</button>`;
+  return `<main class="cloud-gate"><section class="view-card cloud-gate-card">${content}</section></main>`;
 }
 
 function bindCloudGateEvents() {
@@ -320,12 +327,65 @@ function bindCloudGateEvents() {
       submit.disabled = false;
     }
   });
+  const passwordLinkButton = app.querySelector('[data-action="send-password-link"]');
+  if (passwordLinkButton) passwordLinkButton.addEventListener("click", async () => {
+    const email = form?.elements.email?.value.trim();
+    const errorNode = document.getElementById("cloud-login-error");
+    if (!email) { errorNode.textContent = "Enter your staff email first."; return; }
+    passwordLinkButton.disabled = true;
+    errorNode.textContent = "";
+    try {
+      const redirectTo = new URL(location.href);
+      redirectTo.searchParams.set("view", "password");
+      redirectTo.hash = "";
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: redirectTo.toString() });
+      if (error) throw error;
+      showToast("If that staff account exists, a password setup link has been sent.");
+    } catch (error) {
+      errorNode.textContent = backendErrorMessage(error);
+      passwordLinkButton.disabled = false;
+    }
+  });
   app.querySelectorAll('[data-action="staff-sign-out"]').forEach((button) => button.addEventListener("click", signOutStaff));
   app.querySelectorAll('[data-action="retry-cloud"]').forEach((button) => button.addEventListener("click", () => {
     remoteStatus = "loading";
     render();
     initializeBackend();
   }));
+}
+
+function bindPasswordSetupEvents() {
+  app.querySelectorAll('[data-action="password-back"]').forEach((button) => button.addEventListener("click", () => goToView("dashboard")));
+  const form = document.getElementById("password-setup-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector("button[type='submit']");
+    const errorNode = document.getElementById("password-setup-error");
+    const values = new FormData(form);
+    const password = String(values.get("password") || "");
+    const confirmation = String(values.get("confirmation") || "");
+    if (password !== confirmation) { errorNode.textContent = "The passwords do not match."; return; }
+    submit.disabled = true;
+    errorNode.textContent = "";
+    try {
+      const { error } = await supabaseClient.auth.updateUser({ password });
+      if (error) throw error;
+      const { data, error: sessionError } = await supabaseClient.auth.getSession();
+      if (sessionError) throw sessionError;
+      remoteAuthSession = data.session;
+      await refreshStaffRole();
+      const url = new URL(location.href);
+      url.searchParams.delete("view");
+      url.hash = "";
+      history.replaceState({}, "", `${url.pathname}${url.search}`);
+      render();
+      showToast("Password saved. You are signed in.");
+    } catch (error) {
+      errorNode.textContent = backendErrorMessage(error);
+      submit.disabled = false;
+    }
+  });
 }
 
 async function signOutStaff() {
@@ -748,6 +808,11 @@ function render() {
   if (cloudMode && remoteStatus !== "ready") {
     app.innerHTML = connectionView();
     bindCloudGateEvents();
+    return;
+  }
+  if (cloudMode && view === "password") {
+    app.innerHTML = passwordSetupView();
+    bindPasswordSetupEvents();
     return;
   }
   if (cloudMode && !["ticket", "display"].includes(view) && (!remoteAuthSession || !remoteStaffRole)) {
