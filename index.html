@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f3f5f1" />
+    <meta name="description" content="A calm, clear enrollment queue for students and staff." />
+    <title>Enroll — Enrollment queue</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./supabase-config.js"></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="dialog-title">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-icon"><i class="ph ph-warning-circle" aria-hidden="true"></i></div>
+        <h2 id="dialog-title">Skip this ticket?</h2>
+        <p id="dialog-copy">This will mark the current ticket as a no-show and call the next student.</p>
+        <div class="dialog-actions">
+          <button class="button button-quiet" value="cancel">Keep ticket</button>
+          <button id="dialog-confirm" class="button button-danger" value="confirm">Skip &amp; call next</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
