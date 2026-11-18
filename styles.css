@@ -442,6 +442,7 @@ h1 { margin: 0; color: var(--ink); font-size: clamp(25px, 3vw, 32px); line-heigh
 
 .display-mode { min-height: 100vh; color: #edf3ed; background: var(--forest-deep); }
 .display-page { min-height: 100vh; display: flex; flex-direction: column; padding: clamp(20px, 4vw, 50px); background: radial-gradient(ellipse at 50% 39%, rgba(120,153,130,.18), transparent 50%), var(--forest-deep); animation: page-in .45s ease both; }
+.display-page.display-step-two { background: radial-gradient(ellipse at 50% 39%, rgba(115,145,165,.25), transparent 50%), #172b34; }
 .display-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
 .display-brand { display: flex; align-items: center; gap: 10px; color: rgba(239,245,239,.79); font-size: 11px; font-weight: 700; letter-spacing: .045em; }
 .display-brand .brand-mark { width: 30px; height: 30px; font-size: 17px; }
@@ -457,6 +458,7 @@ h1 { margin: 0; color: var(--ink); font-size: clamp(25px, 3vw, 32px); line-heigh
 .display-label { color: rgba(221,234,222,.58); font-size: 10px; font-weight: 700; letter-spacing: .17em; text-transform: uppercase; }
 .display-code { display: block; margin: 15px 0 13px; color: #f4f8f2; font-size: clamp(56px, 12vw, 104px); line-height: .98; font-weight: 700; letter-spacing: -.065em; font-variant-numeric: tabular-nums; }
 .display-code.updated { animation: display-ticket-in .55s cubic-bezier(.2,.8,.2,1) both; }
+.display-room-label { display: block; margin: 2px 0 13px; color: #dcebf0; font-size: clamp(26px, 5vw, 38px); line-height: 1.1; font-weight: 700; letter-spacing: -.035em; }
 @keyframes display-ticket-in { from { opacity: 0; transform: translateY(12px) scale(.98); filter: blur(3px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
 .display-message { color: rgba(225,237,226,.67); font-size: 12px; }
 .display-meta { display: flex; align-items: center; justify-content: center; gap: 19px; margin-top: 22px; color: rgba(220,233,222,.58); font-size: 10px; }
@@ -497,6 +499,8 @@ h1 { margin: 0; color: var(--ink); font-size: clamp(25px, 3vw, 32px); line-heigh
   .admin-activity-card, .admin-note { grid-column: 1 / -1; }
 }
 @media (max-width: 960px) {
+  .topbar-actions .button { width: 36px; min-width: 36px; padding: 0; }
+  .topbar-actions .button span { display: none; }
   .kiosk-layout { grid-template-columns: minmax(180px, .62fr) minmax(0, 1.65fr); width: min(1000px, calc(100% - 40px)); }
   .kiosk-sidebar { grid-row: 1 / 3; }
   .kiosk-summary { grid-column: 2; display: grid; grid-template-columns: minmax(130px,.65fr) minmax(0,1.5fr) minmax(125px,.7fr); align-items: center; gap: 10px; }
@@ -667,3 +671,105 @@ h1 { margin: 0; color: var(--ink); font-size: clamp(25px, 3vw, 32px); line-heigh
 .cloud-login-form input:focus { border-color: var(--sage-strong); outline: 3px solid rgba(105, 143, 117, .18); }
 .cloud-login-form .button { margin-top: 8px; }
 .cloud-login-error { min-height: 18px; margin: 0; color: var(--red); font-size: 11px; }
+
+/* Readability pass: keep Open Sans, but make supporting text clearer on kiosk and staff screens. */
+:root { --muted: #5f6b62; --muted-strong: #4d5b51; --sage-strong: #5e7865; }
+body { font-size: 15px; line-height: 1.6; letter-spacing: 0; font-optical-sizing: auto; }
+h1, h2, h3, .metric-value, .current-code, .display-main h1, .display-code,
+.kiosk-ticket-number, .kiosk-issued-card h1, .cloud-gate-card h1 { letter-spacing: -.02em; }
+.brand, .panel-title { letter-spacing: 0; }
+
+.brand small, .nav-label, .sidebar-session .mini-label, .eyebrow, .demo-pill,
+.current-topline, .current-code-label, .queue-table th, .kiosk-sidebar-label,
+.kiosk-section-kicker, .kiosk-review-card small, .kiosk-ticket-details small,
+.ticket-progress-head small, .ticket-stage-label, .display-overline, .display-label {
+  font-size: 11px;
+  letter-spacing: .06em;
+}
+
+.nav-link { font-size: 14px; }
+.sidebar-session strong, .profile-name { font-size: 13px; }
+.profile-role, .top-date, .topbar-context, .session-indicator, .metric-top,
+.metric-caption, .panel-subtitle, .panel-link, .current-detail, .current-empty p,
+.process-check, .process-current, .search-box input, .filter-tab, .queue-table td,
+.queue-meta, .queue-foot, .process-chip, .after-step-ticket strong,
+.after-step-ticket small, .after-step-row .button, .after-step-foot,
+.side-card-head span, .detail-copy small, .detail-copy strong, .subtle-button,
+.small-status, .activity-copy strong, .activity-copy span, .activity-time,
+.activity-empty, .privacy-note, .ticket-session-line, .ticket-privacy,
+.ticket-result > p, .ticket-result .ticket-watch, .closed-banner,
+.kiosk-brand small, .kiosk-header-session small, .kiosk-help-button,
+.kiosk-step-item, .kiosk-sidebar-bottom strong, .kiosk-sidebar-bottom small,
+.kiosk-content-top, .kiosk-choice-copy small, .kiosk-track-card .kiosk-choice-copy strong,
+.kiosk-track-card .kiosk-choice-copy small, .kiosk-filter, .kiosk-note,
+.kiosk-review-card div > span, .kiosk-back-button, .kiosk-footer-hint,
+.kiosk-continue-button, .kiosk-large-button, .kiosk-summary-head small,
+.kiosk-summary-line span, .kiosk-summary-line strong, .kiosk-summary-wait small,
+.kiosk-summary-note, .kiosk-footer, .kiosk-closed-banner,
+.kiosk-ticket-details strong, .ticket-progress-code, .ticket-progress-message,
+.ticket-progress-item, .ticket-progress-item small, .kiosk-ticket-hint,
+.kiosk-reset-copy, .setup-form > p, .setup-info > p, .form-group label,
+.form-group input, .form-help, .setup-note, .admin-session-name small,
+.admin-session-name strong, .admin-session-facts span, .admin-session-facts strong,
+.admin-actions .button, .admin-access-badge, .role-row strong, .role-row small,
+.role-count, .admin-access-footer > span, .admin-access-footer .subtle-button,
+.admin-note, .display-brand, .display-header .button, .display-station,
+.display-meta, .display-bottom, .toast, .dialog-card p, .cloud-login-form label,
+.cloud-login-error {
+  font-size: 12px;
+}
+
+.metric-caption, .panel-subtitle, .queue-meta, .queue-foot, .after-step-foot,
+.side-card-head span, .detail-copy small, .activity-copy span, .activity-time,
+.ticket-privacy, .kiosk-footer-hint, .kiosk-footer, .kiosk-reset-copy,
+.form-help, .admin-session-name small, .admin-session-facts span, .role-row small,
+.role-count, .admin-access-footer > span, .admin-note, .display-bottom {
+  color: #5f6b62;
+}
+.current-topline, .current-code-label { color: rgba(255,255,255,.82); }
+.queue-table th { color: #536157; }
+.queue-table td { color: #46534a; }
+.kiosk-step-item, .kiosk-sidebar-bottom small { color: rgba(244,248,244,.78); }
+.display-label, .display-meta, .display-bottom { color: rgba(238,246,239,.8); }
+.queue-meta, .queue-foot, .kiosk-footer, .display-bottom { line-height: 1.5; }
+
+/* Step 2 room queues */
+.room-queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; margin-bottom: 16px; }
+.room-queue-select-label { display: block; margin-bottom: 5px; color: #758176; font-size: 11px; font-weight: 700; }
+.room-queue-select { min-width: 205px; min-height: 40px; padding: 0 34px 0 11px; border: 1px solid #dfe7e0; border-radius: 10px; color: #354238; background: #fff; font: inherit; font-size: 13px; font-weight: 600; }
+.room-queue-count { display: flex; align-items: center; gap: 10px; color: #536157; }
+.room-queue-count > span, .room-queue-count-badge { min-width: 30px; height: 30px; display: grid; place-items: center; padding: 0 7px; border-radius: 9px; color: #3f5a45; background: #e8f0e9; font-size: 13px; font-weight: 800; }
+.room-queue-count small { font-size: 12px; }
+.room-current-card { padding: clamp(20px, 3vw, 30px); margin-bottom: 16px; border: 1px solid #dfe8e0; border-radius: 17px; color: #354238; background: linear-gradient(145deg, #fff, #f2f6f2); box-shadow: var(--shadow); }
+.room-current-card.has-current { border-color: #cddccd; background: linear-gradient(145deg, #f5faf4, #e7f0e6); }
+.room-current-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.room-current-heading .eyebrow { margin: 0; color: #758c79; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.room-current-state { padding: 5px 9px; border-radius: 99px; color: #4c6952; background: #e5efe5; font-size: 10px; font-weight: 700; }
+.room-current-ticket { display: grid; gap: 6px; margin-top: 18px; }
+.room-current-ticket strong { color: #2d3c30; font-size: clamp(38px, 6vw, 64px); line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
+.room-current-ticket span { color: #536157; font-size: 15px; font-weight: 700; }
+.room-current-ticket small { color: #849087; font-size: 12px; }
+.room-current-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 20px; }
+.room-current-empty { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 14px; }
+.room-current-empty h2 { margin: 0; color: #344137; font-size: 21px; }
+.room-current-empty p { margin: 6px 0 0; color: #7c897e; font-size: 13px; line-height: 1.6; }
+.room-call-next { flex: 0 0 auto; }
+.room-queue-list, .room-recent-list { margin-bottom: 16px; overflow: hidden; }
+.room-queue-table-wrap { overflow-x: auto; }
+.room-queue-table { min-width: 690px; }
+.room-recent-codes { display: flex; flex-wrap: wrap; gap: 9px; padding: 0 19px 18px; }
+.room-recent-codes > span { display: grid; gap: 3px; padding: 9px 11px; border: 1px solid #e5ebe5; border-radius: 10px; background: #fafcf9; }
+.room-recent-codes strong { color: #516054; font-size: 12px; }
+.room-recent-codes small, .room-recent-codes p { margin: 0; color: #8b968c; font-size: 10px; }
+@media (max-width: 650px) {
+  .room-current-empty { align-items: stretch; flex-direction: column; }
+  .room-call-next { width: 100%; }
+  .room-queue-toolbar { align-items: flex-start; }
+  .room-queue-table { min-width: 620px; }
+}
+
+
+@media (max-width: 760px) {
+  .topbar-actions .button, .current-actions .button, .kiosk-step-item,
+  .kiosk-content-top, .queue-table td, .process-chip { font-size: 12px; }
+}

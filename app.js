@@ -1,7 +1,7 @@
-const STORAGE_KEY = "enroll-queue-demo-v1";
-const VIEW_NAMES = { dashboard: "Queue dashboard", ticket: "Get a ticket", display: "Public display", admin: "Admin console", setup: "Session setup", password: "Set staff password" };
+const STORAGE_KEY = "enroll-queue-demo-v2";
+const VIEW_NAMES = { dashboard: "Queue dashboard", ticket: "Get a ticket", display: "Step 1 public display", "display-step2": "Step 2 track room", "room-queue": "Step 2 room queue", admin: "Admin console", setup: "Session setup", password: "Set staff password" };
 const iconNames = {
-  dashboard: "ph-squares-four", ticket: "ph-ticket", display: "ph-monitor-play", admin: "ph-shield-check", setup: "ph-sliders-horizontal",
+  dashboard: "ph-squares-four", ticket: "ph-ticket", display: "ph-monitor-play", "display-step2": "ph-map-pin", "room-queue": "ph-list-numbers", admin: "ph-shield-check", setup: "ph-sliders-horizontal",
   add: "ph-plus", arrow: "ph-arrow-right", search: "ph-magnifying-glass", clock: "ph-clock", users: "ph-users-three",
   check: "ph-check-circle", trend: "ph-trend-up", bell: "ph-bell-ringing", pin: "ph-map-pin", calendar: "ph-calendar-blank",
   shield: "ph-shield-check", speaker: "ph-speaker-high", mute: "ph-speaker-slash", play: "ph-play", pause: "ph-pause",
@@ -27,15 +27,27 @@ let remoteStaffRole = null;
 let remoteChannel = null;
 let remoteRefreshTimer = null;
 let remoteActionPending = false;
+let remoteTicketPending = false;
 let activeFilter = "all";
 let searchQuery = "";
+let activeRoom = new URLSearchParams(location.search).get("room") || "Room 1";
 let mobileMenuOpen = false;
-let displaySpeechEnabled = sessionStorage.getItem("enroll-speech-enabled") === "true";
-let lastSeenAnnouncement = sessionStorage.getItem("enroll-last-announcement") || "";
+let activeDisplayStep = new URLSearchParams(location.search).get("view") === "display-step2" ? 2 : 1;
+let displaySpeechEnabled = sessionStorage.getItem(`enroll-speech-enabled-step-${activeDisplayStep}`) === "true";
+let lastSeenAnnouncement = sessionStorage.getItem(`enroll-last-announcement-step-${activeDisplayStep}`) || "";
 let pendingConfirmAction = null;
 let toastTimer = null;
 const academicTracks = ["STEM", "Business and Entrepreneurship", "ASSH"];
 const techProTracks = ["Programming", "Visual Graphic Design", "Animation", "Bakery"];
+const demoRoomMappings = {
+  STEM: "Room 1",
+  "Business and Entrepreneurship": "Room 2",
+  ASSH: "Room 3",
+  Programming: "Room 4",
+  "Visual Graphic Design": "Room 5",
+  Animation: "Room 6",
+  Bakery: "Room 7"
+};
 const trackIcons = {
   STEM: "ph-flask",
   "Business and Entrepreneurship": "ph-chart-line-up",
@@ -45,7 +57,7 @@ const trackIcons = {
   Animation: "ph-film-strip",
   Bakery: "ph-cake"
 };
-let kioskDraft = { grade: "", pathway: "", track: "", documentsChecked: false, orientationComplete: false, step: "prerequisites" };
+let kioskDraft = { grade: "", pathway: "", track: "", documentsChecked: false, orientationComplete: false, brigadaComplete: false, step: "prerequisites" };
 let kioskTrackFilter = "academic";
 
 const now = Date.now();
@@ -57,6 +69,12 @@ function seedState() {
     const code = `EN-${String(((n * 7319 + 48127) % 900000) + 100000).slice(-6)}`;
     tickets.push({
       id: `seed-done-${n}`, publicCode: code, queueOrder: n, status: "COMPLETED", callCount: 1,
+      grade: n % 2 ? "Grade 11" : "Grade 12",
+      track: Object.keys(demoRoomMappings)[(n - 1) % Object.keys(demoRoomMappings).length],
+      roomLabel: demoRoomMappings[Object.keys(demoRoomMappings)[(n - 1) % Object.keys(demoRoomMappings).length]],
+      step2Status: n === 1 ? "IN_SERVICE" : n % 4 === 0 ? "DONE" : "WAITING",
+      step2CalledAt: n === 1 ? minutesAgo(6) : null,
+      step2CompletedAt: n % 4 === 0 ? minutesAgo(12) : null,
       progress: { documentsChecked: true, orientationComplete: true, teacherComplete: true, brigadaComplete: true, roomAssigned: true },
       createdAt: minutesAgo(115 - n * 3), calledAt: minutesAgo(112 - n * 3),
       serviceStartedAt: minutesAgo(110 - n * 3), completedAt: minutesAgo(107 - n * 3)
@@ -64,18 +82,19 @@ function seedState() {
   }
   tickets.push({
     id: "seed-current", publicCode: "EN-583104", queueOrder: 19, status: "IN_SERVICE", callCount: 1,
-    progress: { documentsChecked: true, orientationComplete: true, teacherComplete: false, brigadaComplete: false, roomAssigned: false },
+    progress: { documentsChecked: true, orientationComplete: true, teacherComplete: false, brigadaComplete: true, roomAssigned: false },
     createdAt: minutesAgo(14), calledAt: minutesAgo(8), serviceStartedAt: minutesAgo(4), completedAt: null
   });
   const codes = ["EN-835271", "EN-204883", "EN-619042", "EN-440615", "EN-972133", "EN-136590"];
   codes.forEach((code, index) => tickets.push({
     id: `seed-wait-${index + 1}`, publicCode: code, queueOrder: 20 + index, status: "WAITING", callCount: 0,
-    progress: { documentsChecked: true, orientationComplete: true, teacherComplete: false, brigadaComplete: false, roomAssigned: false },
+    progress: { documentsChecked: true, orientationComplete: true, teacherComplete: false, brigadaComplete: true, roomAssigned: false },
     createdAt: minutesAgo(5 + index * 3), calledAt: null, serviceStartedAt: null, completedAt: null
   }));
   return {
     session: { name: "Enrollment — Morning Session", status: "ACTIVE", station: "Step 1 — Teacher Station", startedAt: minutesAgo(120) },
     tickets,
+    rooms: [...new Set(Object.values(demoRoomMappings))],
     nextQueueOrder: 26,
     currentTicketId: "seed-current",
     events: [
@@ -93,6 +112,7 @@ function loadState() {
       const parsed = JSON.parse(stored);
       if (parsed?.session && Array.isArray(parsed.tickets) && Array.isArray(parsed.events)) {
         parsed.tickets.forEach(ensureTicketProgress);
+        parsed.tickets.forEach(ensureTicketStep2);
         return parsed;
       }
     }
@@ -107,11 +127,15 @@ function ensureTicketProgress(ticket) {
     documentsChecked: saved.documentsChecked ?? true,
     orientationComplete: saved.orientationComplete ?? true,
     teacherComplete: saved.teacherComplete ?? wasServed,
-    brigadaComplete: saved.brigadaComplete ?? wasServed,
+    brigadaComplete: saved.brigadaComplete ?? true,
     roomAssigned: saved.roomAssigned ?? wasServed,
     teacherCompletedAt: saved.teacherCompletedAt || (wasServed ? ticket.completedAt || ticket.createdAt : null),
     brigadaCompletedAt: saved.brigadaCompletedAt || (wasServed ? ticket.completedAt || ticket.createdAt : null)
   };
+}
+
+function ensureTicketStep2(ticket) {
+  if (isReadyForStep2(ticket)) ticket.step2Status ||= "WAITING";
 }
 
 let state = loadState();
@@ -127,6 +151,9 @@ function persistState(shouldRender = true) {
 
 function backendErrorMessage(error) {
   const message = String(error?.message || error || "Could not connect to Supabase.");
+  if (/PGRST202|step2_room_action.*schema cache|could not find the function.*step2_room_action/i.test(message)) {
+    return "Step 2 queue setup is missing from the Supabase database. An administrator must run supabase/migrations/202611190003_step2_room_queue.sql in the Supabase SQL Editor, then reload this page.";
+  }
   if (/Failed to fetch|NetworkError|Load failed/i.test(message)) return "Could not reach Supabase. Check the project URL, publishable key, and internet connection.";
   if (/staff sign-in|required|permission denied|row-level security|42501/i.test(message)) return "Staff sign-in is required for this action, or this account has not been given a staff role.";
   return message;
@@ -134,17 +161,13 @@ function backendErrorMessage(error) {
 
 async function loadRemoteState() {
   if (!supabaseClient) throw new Error("The Supabase client did not load. Check your internet connection and reload this page.");
-  const [sessionResult, ticketsResult, eventsResult] = await Promise.all([
-    supabaseClient.from("enrollment_sessions").select("id,name,station,status,started_at").eq("is_current", true).maybeSingle(),
-    supabaseClient.from("queue_tickets").select("id,session_id,public_code,queue_order,status,grade,pathway,track,elective,progress,room_label,call_count,created_at,called_at,service_started_at,completed_at,skipped_at").order("queue_order", { ascending: true }),
-    supabaseClient.from("queue_events").select("id,session_id,event_type,ticket_code,created_at").order("created_at", { ascending: false }).limit(100)
-  ]);
-  if (sessionResult.error) throw sessionResult.error;
-  if (ticketsResult.error) throw ticketsResult.error;
-  if (eventsResult.error) throw eventsResult.error;
-  const session = sessionResult.data;
+  const { data: snapshot, error } = await supabaseClient.rpc("get_queue_snapshot", {
+    p_ticket_id: sessionStorage.getItem("enroll-my-ticket") || null
+  });
+  if (error) throw error;
+  const session = snapshot?.session;
   if (!session) throw new Error("No current enrollment session was found. Run the Supabase schema setup first.");
-  const tickets = (ticketsResult.data || []).filter((ticket) => ticket.session_id === session.id).map((ticket) => ({
+  const tickets = (snapshot.tickets || []).map((ticket) => ({
     id: ticket.id,
     publicCode: ticket.public_code,
     queueOrder: ticket.queue_order,
@@ -155,6 +178,9 @@ async function loadRemoteState() {
     elective: ticket.elective,
     progress: ticket.progress || {},
     roomLabel: ticket.room_label,
+    step2Status: ticket.step2_status || (ticket.room_label ? "WAITING" : null),
+    step2CalledAt: ticket.step2_called_at || null,
+    step2CompletedAt: ticket.step2_completed_at || null,
     callCount: ticket.call_count || 0,
     createdAt: ticket.created_at,
     calledAt: ticket.called_at,
@@ -166,9 +192,11 @@ async function loadRemoteState() {
   state = {
     session: { id: session.id, name: session.name, station: session.station, status: session.status, startedAt: session.started_at },
     tickets,
-    events: (eventsResult.data || []).filter((event) => event.session_id === session.id).map((event) => ({
-      id: event.id, type: event.event_type, ticketCode: event.ticket_code, createdAt: event.created_at
-    })),
+    rooms: snapshot.rooms || [...new Set([...Object.values(demoRoomMappings), ...tickets.map((ticket) => ticket.roomLabel).filter(Boolean)])],
+    events: (snapshot.events || []).map((event) => {
+      const ticket = tickets.find((item) => item.publicCode === event.ticket_code);
+      return { id: event.id, type: event.event_type, ticketCode: event.ticket_code, roomLabel: event.room_label || ticket?.roomLabel || null, createdAt: event.created_at };
+    }),
     nextQueueOrder: tickets.reduce((max, ticket) => Math.max(max, ticket.queueOrder), 0) + 1,
     currentTicketId: tickets.find((ticket) => ["CALLED", "IN_SERVICE"].includes(ticket.status))?.id || null
   };
@@ -268,6 +296,8 @@ async function runRemoteAction(action, ticketId = null, payload = {}) {
 }
 
 async function runRemoteTicketIssue(selection) {
+  if (remoteTicketPending) return;
+  remoteTicketPending = true;
   try {
     const { data, error } = await supabaseClient.rpc("issue_enrollment_ticket", {
       p_grade: `Grade ${selection.grade}`,
@@ -275,6 +305,7 @@ async function runRemoteTicketIssue(selection) {
       p_track: selection.track,
       p_documents_checked: Boolean(selection.documentsChecked),
       p_orientation_complete: Boolean(selection.orientationComplete),
+      p_brigada_complete: Boolean(selection.brigadaComplete),
       p_elective: selection.elective || null
     });
     if (error) throw error;
@@ -284,6 +315,8 @@ async function runRemoteTicketIssue(selection) {
     showToast(`${data.public_code} is now in the queue.`);
   } catch (error) {
     showToast(backendErrorMessage(error), "error");
+  } finally {
+    remoteTicketPending = false;
   }
 }
 
@@ -336,6 +369,8 @@ function bindCloudGateEvents() {
     errorNode.textContent = "";
     try {
       const redirectTo = new URL(location.href);
+      if (redirectTo.hostname === "127.0.0.1" || redirectTo.hostname === "::1") redirectTo.hostname = "localhost";
+      redirectTo.search = "";
       redirectTo.searchParams.set("view", "password");
       redirectTo.hash = "";
       const { error } = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: redirectTo.toString() });
@@ -441,43 +476,55 @@ function waitingTickets() {
 }
 
 function teacherReadyTickets() {
-  return waitingTickets().filter((ticket) => ticket.progress?.documentsChecked && ticket.progress?.orientationComplete);
+  return waitingTickets().filter((ticket) => ticket.progress?.documentsChecked && ticket.progress?.orientationComplete && ticket.progress?.brigadaComplete);
+}
+
+function stageQueue(stage) {
+  const tickets = stage === "room"
+    ? state.tickets.filter(isReadyForStep2)
+    : state.tickets.filter((ticket) => processStage(ticket) === stage);
+  return tickets.filter((ticket) => !["CANCELLED", "SKIPPED"].includes(ticket.status))
+    .sort((a, b) => a.queueOrder - b.queueOrder);
+}
+
+function step2QueueForRoom(room = activeRoom) {
+  return stageQueue("room").filter((ticket) => ticket.roomLabel === room && ticket.step2Status !== "DONE" && ticket.step2Status !== "SKIPPED")
+    .sort((a, b) => a.queueOrder - b.queueOrder);
+}
+
+function setActiveRoom(room) {
+  activeRoom = room;
+  const url = new URL(location.href);
+  url.searchParams.set("room", room);
+  history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  render();
+}
+
+function isReadyForStep2(ticket) {
+  return Boolean(ticket.roomLabel && (ticket.progress?.teacherComplete || ticket.status === "COMPLETED") && (ticket.progress?.roomAssigned || ticket.status === "COMPLETED"));
 }
 
 function processStage(ticket) {
   const progress = ticket.progress || {};
-  if (!progress.documentsChecked) return "documents";
-  if (!progress.orientationComplete) return "orientation";
+  if (!progress.documentsChecked || !progress.orientationComplete || !progress.brigadaComplete) return "preparation";
   if (!progress.teacherComplete) return "teacher";
-  if (!progress.brigadaComplete) return "brigada";
   if (!progress.roomAssigned) return "room";
   return "done";
 }
 
 function processStageLabel(ticket) {
   const stage = processStage(ticket);
-  if (stage === "documents") return "Document check needed";
-  if (stage === "orientation") return "Orientation needed";
+  if (stage === "preparation") return "Preparation needed";
   if (stage === "teacher") return ticket.status === "IN_SERVICE" ? "Teacher meeting" : ticket.status === "CALLED" ? "Proceed to teacher" : "Waiting for teacher";
-  if (stage === "brigada") return "Step 1 sub-requirement · Brigada";
-  if (stage === "room") return "Ready for Step 2 · Room assignment";
+  if (stage === "room") return "Step 1 complete · Room routing pending";
+  if (stage === "done") return `Proceed to ${ticket.roomLabel || "your track room"} · Step 2`;
   return "Enrollment complete";
 }
 
-function stageQueue(stage) {
-  const arrivedAtStage = (ticket) => stage === "brigada"
-    ? ticket.progress?.teacherCompletedAt || ticket.createdAt
-    : stage === "room" ? ticket.progress?.brigadaCompletedAt || ticket.createdAt : ticket.createdAt;
-  return state.tickets.filter((ticket) => !["SKIPPED", "CANCELLED"].includes(ticket.status) && processStage(ticket) === stage)
-    .sort((a, b) => new Date(arrivedAtStage(a)).getTime() - new Date(arrivedAtStage(b)).getTime() || a.queueOrder - b.queueOrder);
-}
-
-function isFirstAtStage(ticket, stage) {
-  return stageQueue(stage)[0]?.id === ticket.id;
-}
-
 function currentTicket() {
-  return state.tickets.find((ticket) => ticket.id === state.currentTicketId) || null;
+  return state.tickets.find((ticket) => ticket.id && ticket.id === state.currentTicketId)
+    || state.tickets.find((ticket) => ["CALLED", "IN_SERVICE"].includes(ticket.status))
+    || null;
 }
 
 function statusClass(status) {
@@ -500,8 +547,18 @@ function getMetricEstimate() {
   return Math.max(0, waitingTickets().length * 4);
 }
 
-function announcementEvent() {
-  return state.events.find((event) => event.type === "TICKET_CALLED" || event.type === "TICKET_RECALLED") || null;
+function announcementEvent(step = activeDisplayStep) {
+  return state.events.find((event) => step === 2
+    ? event.type === "STEP2_TICKET_CALLED" && event.roomLabel === activeRoom
+    : event.type === "TICKET_CALLED" || event.type === "TICKET_RECALLED") || null;
+}
+
+function syncDisplaySettings(view) {
+  const step = view === "display-step2" ? 2 : 1;
+  if (activeDisplayStep === step) return;
+  activeDisplayStep = step;
+  displaySpeechEnabled = sessionStorage.getItem(`enroll-speech-enabled-step-${step}`) === "true";
+  lastSeenAnnouncement = sessionStorage.getItem(`enroll-last-announcement-step-${step}`) || "";
 }
 
 function navButton(view, label, isActive) {
@@ -518,7 +575,9 @@ function shell(content, activeView) {
       <nav class="sidebar-nav">
         ${navButton("dashboard", "Queue dashboard", activeView === "dashboard")}
         ${navButton("ticket", "Get a ticket", activeView === "ticket")}
-        ${navButton("display", "Public display", activeView === "display")}
+        ${navButton("display", "Public display · Step 1", activeView === "display")}
+        ${navButton("display-step2", "Public display · Step 2", activeView === "display-step2")}
+        ${navButton("room-queue", "Step 2 room queue", activeView === "room-queue")}
       </nav>
       <div class="nav-label" style="margin-top:27px">Manage</div>
       <nav class="sidebar-nav">${navButton("admin", "Admin console", activeView === "admin")}${navButton("setup", "Session setup", activeView === "setup")}</nav>
@@ -533,7 +592,7 @@ function shell(content, activeView) {
     <section class="main-column">
       <header class="topbar">
         <div class="topbar-left"><button class="mobile-menu" data-action="open-menu" aria-label="Open navigation">${icon("menu")}</button><span class="topbar-context"><strong>${esc(title)}</strong></span><span class="vertical-divider"></span><span class="top-date">${dateLabel()}</span></div>
-        <div class="topbar-actions"><span class="demo-pill">${icon(cloudMode ? "broadcast" : "info")}${cloudMode ? "Supabase connected" : "Local demo"}</span><button class="button button-secondary" data-action="open-display">${icon("display")}<span>Public display</span></button>${cloudMode ? `<button class="subtle-button" data-action="staff-sign-out">Sign out</button>` : ""}</div>
+        <div class="topbar-actions"><span class="demo-pill">${icon(cloudMode ? "broadcast" : "info")}${cloudMode ? "Supabase connected" : "Local demo"}</span><button class="button button-secondary" data-action="open-step1-display">${icon("display")}<span>Step 1 display</span></button><button class="button button-secondary" data-action="open-step2-display">${icon("display")}<span>Step 2 display</span></button>${cloudMode ? `<button class="subtle-button" data-action="staff-sign-out">Sign out</button>` : ""}</div>
       </header>
       <main class="page-wrap">${content}</main>
     </section>
@@ -545,11 +604,11 @@ function currentTicketCard() {
   if (!ticket) return `<section class="current-card" aria-label="Current ticket"><div class="current-topline"><span>Step 1 · Teacher meeting</span><span class="step-chip">${icon("pin")} ${esc(state.session.station)}</span></div><div class="current-empty"><div><h3>Teacher station is ready</h3><p>Call the next prepared student when you’re ready.</p></div><div class="empty-symbol">${icon("queue")}</div></div><div class="current-actions"><button class="button button-primary" data-action="call-next" ${waitingTickets().length === 0 ? "disabled" : ""}>${icon("bell")}Call next Step 1 ticket</button></div></section>`;
   const isServing = ticket.status === "IN_SERVICE";
   return `<section class="current-card" aria-label="Current ticket"><div class="current-topline"><span>Now serving</span><span class="step-chip">${icon("pin")} ${esc(state.session.station)}</span></div><div class="current-main"><div><span class="current-code-label">Ticket number</span><span class="current-code">${esc(ticket.publicCode)}</span><div class="current-detail">Called at ${timeLabel(ticket.calledAt)} · ${ticket.callCount} ${ticket.callCount === 1 ? "call" : "calls"}</div></div><span class="status-chip ${statusClass(ticket.status)}">${statusLabel(ticket.status)}</span></div><div class="current-actions">
-    <button class="button button-primary" data-action="complete-next" ${!isServing ? "disabled" : ""}>${icon("check")}Complete teacher meeting &amp; call next</button>
+    <button class="button button-primary" data-action="complete-next" ${!isServing ? "disabled" : ""}>${icon("check")}Complete Step 1 &amp; call next</button>
     <button class="button button-secondary" data-action="start-service" ${isServing ? "disabled" : ""}>${icon("play")}${isServing ? "Meeting in progress" : "Start teacher meeting"}</button>
     <button class="button button-quiet" data-action="recall">${icon("refresh")}Recall</button>
     <button class="button button-quiet" data-action="confirm-skip" ${isServing ? "disabled" : ""}>${icon("skip")}Skip</button>
-  </div><div class="current-process"><span class="process-check done">${icon("checkmark")}Documents checked</span><span class="process-check done">${icon("checkmark")}Orientation complete</span><span class="process-current">Step 1 · Teacher meeting</span></div>${!isServing ? '<div class="current-detail">After the meeting, Brigada sign-off completes Step 1.</div>' : ""}</section>`;
+  </div><div class="current-process"><span class="process-check done">${icon("checkmark")}Documents checked</span><span class="process-check done">${icon("checkmark")}Orientation complete</span><span class="process-check done">${icon("checkmark")}Brigada slip checked</span><span class="process-current">Step 1 · Teacher meeting</span></div>${!isServing ? '<div class="current-detail">After Step 1, the student proceeds to the room mapped to their selected track.</div>' : ""}</section>`;
 }
 
 function queueRowsHtml() {
@@ -571,22 +630,9 @@ function queuePanel() {
   const waiting = waitingTickets();
   const inQueueCount = state.tickets.filter((ticket) => ["WAITING", "CALLED", "IN_SERVICE"].includes(ticket.status)).length;
   const nextReady = teacherReadyTickets()[0];
-  return `<section class="panel queue-panel"><div class="panel-head"><div><h2 class="panel-title">Step 1 · Teacher queue <span style="color:#9aa29a;font-weight:500">(${inQueueCount})</span></h2><p class="panel-subtitle">Tickets are issued after document check and orientation</p></div><button class="panel-link" data-action="go-ticket">Issue ticket ${icon("arrow")}</button></div>
+  return `<section class="panel queue-panel"><div class="panel-head"><div><h2 class="panel-title">Step 1 · Teacher queue <span style="color:#9aa29a;font-weight:500">(${inQueueCount})</span></h2><p class="panel-subtitle">Tickets follow document check, orientation, and Brigada slip check</p></div><button class="panel-link" data-action="go-ticket">Issue ticket ${icon("arrow")}</button></div>
     <div class="queue-tools"><label class="search-box">${icon("search")}<input id="queue-search" type="search" value="${esc(searchQuery)}" placeholder="Search ticket number" aria-label="Search ticket number" /></label><div class="filter-tabs" role="group" aria-label="Filter queue"><button class="filter-tab ${activeFilter === "all" ? "active" : ""}" data-filter="all">All tickets</button><button class="filter-tab ${activeFilter === "waiting" ? "active" : ""}" data-filter="waiting">Waiting</button></div></div>
     <table class="queue-table"><thead><tr><th>Order</th><th>Ticket</th><th>Waiting</th><th>Current step</th><th>Status</th></tr></thead><tbody id="queue-list">${queueRowsHtml()}</tbody></table><div class="queue-foot"><span>Sorted by <strong>arrival order</strong></span><span>${nextReady ? `Next up · <strong>${esc(nextReady.publicCode)}</strong>` : waiting.length ? "Waiting on Step 1 readiness" : "Queue is clear"}</span></div></section>`;
-}
-
-function afterTeacherPanel() {
-  const nextRoom = stageQueue("room")[0];
-  const tickets = [...stageQueue("brigada"), ...stageQueue("room")];
-  const rows = tickets.map((ticket) => {
-    const stage = processStage(ticket);
-    const canAdvance = stage === "brigada" || nextRoom?.id === ticket.id;
-    const action = stage === "brigada" ? "complete-brigada" : "assign-room";
-    const label = stage === "brigada" ? "Sign Brigada" : "Assign room";
-    return `<div class="after-step-row"><div class="after-step-ticket"><span class="queue-order">#${String(ticket.queueOrder).padStart(3, "0")}</span><strong>${esc(ticket.publicCode)}</strong><small>${esc(processStageLabel(ticket))}</small></div><button class="button ${canAdvance ? "button-secondary" : "button-quiet"}" data-action="${action}" data-ticket-id="${esc(ticket.id)}" ${canAdvance ? "" : "disabled"}>${canAdvance ? label : "Wait turn"}</button></div>`;
-  }).join("");
-  return `<section class="panel after-step-panel"><div class="panel-head"><div><h2 class="panel-title">Step 1 completion &amp; Step 2 room assignment</h2><p class="panel-subtitle">Brigada sign-off completes Step 1; room assignment follows</p></div><span class="step-chip">Steps 1 &amp; 2</span></div><div class="after-step-list">${rows || '<div class="activity-empty">No students are waiting for Brigada or room assignment.</div>'}</div><div class="after-step-foot">${icon("info")} Sign Brigada to complete Step 1; assign rooms in eligible arrival order.</div></section>`;
 }
 
 function sessionCard() {
@@ -601,8 +647,8 @@ function sessionCard() {
 }
 
 function activityLine(event) {
-  const labels = { TICKET_CALLED: "called to the teacher", TICKET_COMPLETED: "completed service", TEACHER_MEETING_COMPLETED: "completed the teacher meeting", BRIGADA_COMPLETED: "completed Brigada", ROOM_ASSIGNED: "received a room assignment", TICKET_SKIPPED: "marked as no-show", TICKET_RECALLED: "recalled to the station", TICKET_CREATED: "joined the Step 1 queue", SERVICE_STARTED: "service started" };
-  const glyph = ["TICKET_COMPLETED", "TEACHER_MEETING_COMPLETED", "BRIGADA_COMPLETED", "ROOM_ASSIGNED"].includes(event.type) ? "check" : event.type === "TICKET_CREATED" ? "add" : event.type === "TICKET_SKIPPED" ? "skip" : "bell";
+  const labels = { TICKET_CALLED: "called to the teacher", TICKET_COMPLETED: "completed service", TEACHER_MEETING_COMPLETED: "completed the teacher meeting", BRIGADA_COMPLETED: "confirmed Brigada before Step 1", ROOM_ASSIGNED: "was routed to a track room", STEP2_TICKET_CALLED: `called to ${event.roomLabel || "the Step 2 teacher"}`, STEP2_TICKET_COMPLETED: "finished the Step 2 meeting", STEP2_TICKET_SKIPPED: "marked as a Step 2 no-show", TICKET_SKIPPED: "marked as no-show", TICKET_RECALLED: "recalled to the station", TICKET_CREATED: "joined the Step 1 queue", SERVICE_STARTED: "service started" };
+  const glyph = ["TICKET_COMPLETED", "TEACHER_MEETING_COMPLETED", "BRIGADA_COMPLETED", "ROOM_ASSIGNED", "STEP2_TICKET_COMPLETED"].includes(event.type) ? "check" : event.type === "TICKET_CREATED" ? "add" : ["TICKET_SKIPPED", "STEP2_TICKET_SKIPPED"].includes(event.type) ? "skip" : "bell";
   return `<div class="activity-item"><span class="activity-dot">${icon(glyph)}</span><div class="activity-copy"><strong>${esc(event.ticketCode || "Session")} ${labels[event.type] || "updated"}</strong><span>${timeLabel(event.createdAt)}</span></div><span class="activity-time">${relativeTime(event.createdAt)}</span></div>`;
 }
 
@@ -615,14 +661,14 @@ function dashboardView() {
   const waiting = teacherReadyTickets().length;
   const completed = state.tickets.filter((ticket) => ticket.status === "COMPLETED").length;
   const sessionStatusCopy = state.session.status === "ACTIVE" ? "Students can join the queue" : state.session.status === "PAUSED" ? "Ticket requests are paused" : "Ticket requests are closed";
-  const content = `<div class="page-heading"><div><p class="eyebrow">Good morning, Jordan</p><h1>Enrollment queue</h1><p class="page-subtitle">Step 1 includes the teacher meeting and Brigada. Document check and orientation come before ticket issue; Step 2 is room assignment.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span><button class="button button-primary" data-action="go-ticket">${icon("add")}Get a ticket</button></div></div>
+  const content = `<div class="page-heading"><div><p class="eyebrow">Good morning, Jordan</p><h1>Enrollment queue</h1><p class="page-subtitle">Document check, orientation, and the Brigada slip come before Step 1. Step 1 is the teacher meeting. Step 2 directs the student to a track room, where a teacher assigns the classroom.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span><button class="button button-primary" data-action="go-ticket">${icon("add")}Get a ticket</button></div></div>
     <div class="metrics">
       <article class="metric-card"><div class="metric-top"><span>Waiting for teacher</span><span class="metric-icon">${icon("users")}</span></div><strong class="metric-value">${waiting}</strong><span class="metric-caption">${waiting ? `First up · ${esc(teacherReadyTickets()[0].publicCode)}` : "No students in line"}</span></article>
       <article class="metric-card"><div class="metric-top"><span>Served today</span><span class="metric-icon">${icon("check")}</span></div><strong class="metric-value">${completed}</strong><span class="metric-caption"><span class="metric-up">${icon("trend")} Steady progress</span></span></article>
       <article class="metric-card"><div class="metric-top"><span>Estimated wait</span><span class="metric-icon">${icon("clock")}</span></div><strong class="metric-value">${getMetricEstimate()}<span style="font-size:13px;font-weight:600;letter-spacing:0"> min</span></strong><span class="metric-caption">Based on today’s service pace</span></article>
       <article class="metric-card"><div class="metric-top"><span>Session status</span><span class="metric-icon">${icon("broadcast")}</span></div><strong class="metric-value" style="font-size:20px;letter-spacing:-.04em">${state.session.status === "ACTIVE" ? "Open" : state.session.status === "PAUSED" ? "Paused" : "Closed"}</strong><span class="metric-caption">${sessionStatusCopy}</span></article>
     </div>
-    <div class="dashboard-grid"><div class="left-stack">${currentTicketCard()}${queuePanel()}${afterTeacherPanel()}</div><div class="right-stack">${sessionCard()}${activityPanel()}<div class="privacy-note">${icon("shield")}<span><strong>Privacy first.</strong> Tickets use a random code. No student names or personal details are collected.</span></div></div></div>`;
+    <div class="dashboard-grid"><div class="left-stack">${currentTicketCard()}${queuePanel()}</div><div class="right-stack">${sessionCard()}${activityPanel()}<div class="privacy-note">${icon("shield")}<span><strong>Privacy first.</strong> Tickets use a random code. No student names or personal details are collected.</span></div></div></div>`;
   return shell(content, "dashboard");
 }
 
@@ -656,11 +702,12 @@ function prerequisiteChoice(value, title, detail, complete) {
 
 function kioskStepContent() {
   if (kioskDraft.step === "prerequisites") return `<div class="kiosk-step-content" key="prerequisites">
-    <div class="kiosk-section-kicker">PREPARATION · BEFORE STEP 1</div><h1>Ready for the teacher queue?</h1><p class="kiosk-lede">Complete both preparation requirements before requesting a Step 1 ticket.</p>
+    <div class="kiosk-section-kicker">PREPARATION · BEFORE STEP 1</div><h1>Ready for the teacher queue?</h1><p class="kiosk-lede">Complete document checking, orientation, and Brigada before requesting a Step 1 ticket.</p>
     <div class="kiosk-choice-grid kiosk-prereq-grid" role="group" aria-label="Confirm preparation requirements">
       ${prerequisiteChoice("documentsChecked", "Document check complete", "Have staff checked your enrollment documents?", kioskDraft.documentsChecked)}
       ${prerequisiteChoice("orientationComplete", "Orientation complete", "Have you watched the orientation video?", kioskDraft.orientationComplete)}
-    </div><div class="kiosk-note">${icon("info")} Only confirm documents after staff checks them, and orientation after you watch the video. Discuss your preferred track and eligibility at Step 1.</div>
+      ${prerequisiteChoice("brigadaComplete", "Brigada slip ready", "Has the Brigada slip been checked before Step 1?", kioskDraft.brigadaComplete)}
+    </div><div class="kiosk-note">${icon("info")} Confirm each preparation item only after it is complete. Discuss your preferred track and eligibility at Step 1.</div>
   </div>`;
 
   if (kioskDraft.step === "grade") return `<div class="kiosk-step-content" key="grade">
@@ -719,23 +766,36 @@ function ticketProgressView(ticket) {
   const teacherLabel = ticket.status === "CALLED" && stage === "teacher" ? "Called to teacher" : ticket.status === "IN_SERVICE" && stage === "teacher" ? "Meeting in progress" : "Teacher meeting";
   const message = stage === "teacher"
     ? ticket.status === "CALLED" ? "Your number was called. Please go to the teacher station." : ticket.status === "IN_SERVICE" ? "Your teacher meeting is in progress." : "Wait in the Step 1 area for your number to be called."
-    : stage === "brigada" ? "After your teacher meeting, complete the Step 1 Brigada sign-off. Then proceed to Step 2 room assignment."
-      : stage === "room" ? "Step 1 is complete. You’re ready for Step 2: room assignment."
-        : stage === "done" ? "Room assigned. Your enrollment steps are complete."
+    : stage === "room" ? "Step 1 is complete. Ask enrollment staff for your track room."
+        : stage === "done" ? `Step 1 is complete. Go to ${ticket.roomLabel || "your track room"} and meet the teacher there.`
           : "Complete the remaining preparation requirement before requesting a ticket.";
   const item = (label, key, complete, currentLabel = "Current") => `<li class="ticket-progress-item ${stateClass(key, complete)}"><span class="ticket-progress-mark">${complete ? icon("checkmark") : icon(key === stage ? "clock" : "caret")}</span><span>${label}</span><small>${complete ? "Complete" : key === stage ? currentLabel : "Upcoming"}</small></li>`;
-  return `<section class="ticket-progress" aria-label="Enrollment progress"><div class="ticket-progress-head"><div><small>YOUR CURRENT STEP</small><strong>${esc(processStageLabel(ticket))}</strong></div><span class="ticket-progress-code">${icon("queue")} #${String(ticket.queueOrder).padStart(3, "0")}</span></div><p class="ticket-progress-message">${message}</p>${ticket.roomLabel ? `<p class="ticket-progress-message"><strong>Assigned room:</strong> ${esc(ticket.roomLabel)}</p>` : ""}<div class="ticket-progress-grid"><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 1 · TEACHER MEETING + BRIGADA</span><ul>${item("Documents checked", "documents", Boolean(progress.documentsChecked))}${item("Orientation video", "orientation", Boolean(progress.orientationComplete))}${item(teacherLabel, "teacher", Boolean(progress.teacherComplete), ticket.status === "WAITING" ? "Waiting" : "Proceed")}${item("Brigada sign-off", "brigada", Boolean(progress.brigadaComplete), "Required to finish Step 1")}</ul></div><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 2 · ROOM ASSIGNMENT</span><ul>${item("Room assignment", "room", Boolean(progress.roomAssigned), "Ready")}</ul></div></div></section>`;
+  return `<section class="ticket-progress" aria-label="Enrollment progress"><div class="ticket-progress-head"><div><small>YOUR CURRENT STEP</small><strong>${esc(processStageLabel(ticket))}</strong></div><span class="ticket-progress-code">${icon("queue")} #${String(ticket.queueOrder).padStart(3, "0")}</span></div><p class="ticket-progress-message">${message}</p>${progress.roomAssigned && ticket.roomLabel ? `<p class="ticket-progress-message"><strong>Go to:</strong> ${esc(ticket.roomLabel)} <span>to meet the teacher for your classroom assignment.</span></p>` : ""}<div class="ticket-progress-grid"><div class="ticket-progress-stage"><span class="ticket-stage-label">PREPARATION · BEFORE STEP 1</span><ul>${item("Document check", "documents", Boolean(progress.documentsChecked))}${item("Orientation", "orientation", Boolean(progress.orientationComplete))}${item("Brigada slip", "brigada", Boolean(progress.brigadaComplete))}</ul></div><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 1 · TEACHER MEETING</span><ul>${item(teacherLabel, "teacher", Boolean(progress.teacherComplete), ticket.status === "WAITING" ? "Waiting" : "Proceed")}</ul></div><div class="ticket-progress-stage"><span class="ticket-stage-label">STEP 2 · TRACK ROOM</span><ul>${item(ticket.roomLabel ? `Go to ${ticket.roomLabel}` : "Track room", "room", Boolean(progress.roomAssigned), "After Step 1")}</ul></div></div></section>`;
 }
 
 function kioskTicketResult(ticket) {
-  return `<div class="kiosk-issued-wrap"><section class="kiosk-issued-card" aria-label="Your queue ticket"><div class="kiosk-success-mark">${icon("checkmark")}</div><p class="kiosk-section-kicker">YOUR STEP 1 TICKET IS READY</p><h1>You're in line.</h1><p class="kiosk-lede">Keep this ticket number. Wait in the Step 1 area and watch for it to be called.</p><div class="kiosk-ticket-number">${esc(ticket.publicCode)}</div><div class="kiosk-ticket-details"><span><small>INCOMING GRADE</small><strong>${esc(ticket.grade || "—")}</strong></span><span><small>PREFERRED TRACK</small><strong>${esc(ticket.track || "Discuss with teacher")}</strong></span><span><small>QUEUE POSITION</small><strong>#${String(ticket.queueOrder).padStart(3, "0")}</strong></span></div>${ticketProgressView(ticket)}<p class="kiosk-ticket-hint">${icon("speaker")} Watch the public display for your number and destination.</p></section><div class="kiosk-issued-actions"><button class="button button-secondary kiosk-large-button" data-action="print-ticket">${icon("printer")}Print ticket</button><button class="button button-primary kiosk-large-button" data-action="new-student">${icon("plus")}Next student</button></div><p class="kiosk-reset-copy">Starting the next ticket keeps this one in the queue.</p></div>`;
+  const step2Ready = Boolean(ticket.progress?.teacherComplete || ticket.roomLabel);
+  const destination = ticket.roomLabel || "your track assignment room";
+  const step2Status = ticket.step2Status || "WAITING";
+  const headline = step2Ready ? step2Status === "IN_SERVICE" ? "The teacher is ready for you." : step2Status === "DONE" ? "Step 2 is complete." : `Wait at ${destination}.` : "You're in line.";
+  const lede = step2Ready
+    ? step2Status === "DONE" ? "Your Step 2 meeting is complete. Please follow the teacher’s directions." : step2Status === "IN_SERVICE" ? `Your ticket is being called at ${destination}. Please approach the teacher.` : `Your Step 1 meeting is complete. Go to ${destination} and wait for your ticket to be called.`
+    : "Keep this ticket number. Wait in the Step 1 area and watch for it to be called.";
+  const hint = step2Ready
+    ? step2Status === "DONE" ? "The teacher in your track room will direct you to your assigned classroom." : `Wait at ${destination}. The teacher will call tickets in order.`
+    : "Watch the Step 1 display for your number. After the teacher meeting, follow the room shown for your track.";
+  return `<div class="kiosk-issued-wrap"><section class="kiosk-issued-card" aria-label="Your queue ticket"><div class="kiosk-success-mark">${icon(step2Ready ? "pin" : "checkmark")}</div><p class="kiosk-section-kicker">${step2Ready ? "STEP 1 COMPLETE · CONTINUE TO STEP 2" : "YOUR STEP 1 TICKET IS READY"}</p><h1>${esc(headline)}</h1><p class="kiosk-lede">${esc(lede)}</p><div class="kiosk-ticket-number">${esc(ticket.publicCode)}</div><div class="kiosk-ticket-details"><span><small>INCOMING GRADE</small><strong>${esc(ticket.grade || "—")}</strong></span><span><small>PREFERRED TRACK</small><strong>${esc(ticket.track || "Discuss with teacher")}</strong></span><span><small>${step2Ready ? "TRACK ROOM" : "QUEUE POSITION"}</small><strong>${step2Ready ? esc(destination) : `#${String(ticket.queueOrder).padStart(3, "0")}`}</strong></span></div>${ticketProgressView(ticket)}<p class="kiosk-ticket-hint">${icon(step2Ready ? "pin" : "speaker")}${esc(hint)}</p></section><div class="kiosk-issued-actions"><button class="button button-secondary kiosk-large-button" data-action="print-ticket">${icon("printer")}Print ticket</button><button class="button button-primary kiosk-large-button" data-action="new-student">${icon("plus")}Next student</button></div><p class="kiosk-reset-copy">Starting the next ticket keeps this one in the queue.</p></div>`;
 }
 
 function ticketView() {
   const ticket = getMyTicket();
   const canIssue = state.session.status === "ACTIVE";
-  if (ticket) return `<div class="kiosk-shell"><header class="kiosk-header"><div class="kiosk-brand"><span class="kiosk-brand-mark">${icon("sparkle")}</span><span><strong>enroll</strong><small>Student + parent kiosk</small></span></div><div class="kiosk-header-session"><span class="kiosk-live-dot"></span><span><strong>${esc(state.session.name)}</strong><small>${esc(state.session.station)}</small></span></div><button class="kiosk-help-button" data-action="kiosk-help">${icon("question")}<span>Need help?</span></button></header><main class="kiosk-issued-main">${kioskTicketResult(ticket)}</main><footer class="kiosk-footer"><span>${icon("calendar")} ${dateLabel()}</span><span>Need assistance? Please ask a staff member.</span><span>${icon("lock")} Secure enrollment queue</span></footer></div>`;
-  const isReady = kioskDraft.step === "prerequisites" ? Boolean(kioskDraft.documentsChecked && kioskDraft.orientationComplete)
+  if (ticket) {
+    const step2Ready = Boolean(ticket.progress?.teacherComplete || ticket.roomLabel);
+    const stationCopy = step2Ready ? `Proceed to ${ticket.roomLabel || "your track room"}` : `${state.session.station} · ${waitingTickets().length} waiting`;
+    return `<div class="kiosk-shell"><header class="kiosk-header"><div class="kiosk-brand"><span class="kiosk-brand-mark">${icon("sparkle")}</span><span><strong>enroll</strong><small>Student + parent kiosk</small></span></div><div class="kiosk-header-session"><span class="kiosk-live-dot"></span><span><strong>${esc(state.session.name)}</strong><small>${esc(stationCopy)}</small></span></div><button class="kiosk-help-button" data-action="kiosk-help">${icon("question")}<span>Need help?</span></button></header><main class="kiosk-issued-main">${kioskTicketResult(ticket)}</main><footer class="kiosk-footer"><span>${icon("calendar")} ${dateLabel()}</span><span>Need assistance? Please ask a staff member.</span><span>${icon("lock")} Secure enrollment queue</span></footer></div>`;
+  }
+  const isReady = kioskDraft.step === "prerequisites" ? Boolean(kioskDraft.documentsChecked && kioskDraft.orientationComplete && kioskDraft.brigadaComplete)
     : kioskDraft.step === "grade" ? Boolean(kioskDraft.grade)
     : kioskDraft.step === "pathway" ? Boolean(kioskDraft.pathway)
       : kioskDraft.step === "track" ? Boolean(kioskDraft.track)
@@ -745,25 +805,55 @@ function ticketView() {
   return `<div class="kiosk-shell">
     <header class="kiosk-header"><div class="kiosk-brand"><span class="kiosk-brand-mark">${icon("sparkle")}</span><span><strong>enroll</strong><small>Student + parent kiosk</small></span></div><div class="kiosk-header-session"><span class="kiosk-live-dot"></span><span><strong>${esc(state.session.name)}</strong><small>${esc(state.session.station)} · ${waitingTickets().length} waiting</small></span></div><button class="kiosk-help-button" data-action="kiosk-help">${icon("question")}<span>Need help?</span></button></header>
     ${!canIssue ? `<div class="kiosk-closed-banner">${icon("warning")}<span>${state.session.status === "PAUSED" ? "Ticket requests are paused. Please ask the enrollment team for help." : "This enrollment session is closed. Please ask the enrollment team about the next session."}</span></div>` : ""}
-    <main class="kiosk-layout"><aside class="kiosk-sidebar"><p class="kiosk-sidebar-label">STEP 1 TICKET</p><h2>${kioskDraft.grade === "11" ? "Five" : kioskDraft.grade === "12" ? "Four" : "A few"} quick steps</h2><p class="kiosk-sidebar-copy">Complete document check and orientation first, then get your place in the teacher queue.</p>${kioskStepSidebar()}<div class="kiosk-sidebar-bottom"><span class="kiosk-sidebar-icon">${icon("shield")}</span><span><strong>Your privacy matters</strong><small>No name, ID, or account needed.</small></span></div></aside>
+    <main class="kiosk-layout"><aside class="kiosk-sidebar"><p class="kiosk-sidebar-label">STEP 1 TICKET</p><h2>${kioskDraft.grade === "11" ? "Five" : kioskDraft.grade === "12" ? "Four" : "A few"} quick steps</h2><p class="kiosk-sidebar-copy">Complete document check, orientation, and Brigada first, then get your place in the teacher queue.</p>${kioskStepSidebar()}<div class="kiosk-sidebar-bottom"><span class="kiosk-sidebar-icon">${icon("shield")}</span><span><strong>Your privacy matters</strong><small>No name, ID, or account needed.</small></span></div></aside>
       <section class="kiosk-content-card"><div class="kiosk-content-top"><span>${icon("pin")} ${esc(state.session.station)}</span><span>About 1 minute</span></div>${kioskStepContent()}<div class="kiosk-footer-actions"><button class="kiosk-back-button" data-kiosk-action="back" ${kioskDraft.step === "prerequisites" ? "disabled" : ""}>${icon("leftArrow")}Back</button><span class="kiosk-footer-hint">${kioskDraft.step === "review" ? "Your place is saved as soon as you get a ticket." : "Tap a card to make your selection."}</span><button class="button button-primary kiosk-continue-button" data-kiosk-action="continue" ${!canIssue || !isReady ? "disabled" : ""}>${actionLabel}${icon(actionIcon)}</button></div></section>
       <aside class="kiosk-summary"><div class="kiosk-summary-head"><span>${icon("receipt")}</span><div><strong>Your selection</strong><small>Review as you go</small></div></div><div class="kiosk-summary-lines"><div class="kiosk-summary-line"><span>Incoming grade</span><strong>${kioskDraft.grade ? `Grade ${esc(kioskDraft.grade)}` : "Not selected"}</strong></div><div class="kiosk-summary-line"><span>Track family</span><strong>${kioskDraft.pathway ? esc(kioskDraft.pathway === "academic" ? "Academic track" : "TechPro") : "Not selected"}</strong></div><div class="kiosk-summary-line"><span>Track</span><strong>${esc(kioskDraft.track || "Not selected")}</strong></div></div><div class="kiosk-summary-wait"><span>${icon("users")}</span><div><small>Ready for teacher</small><strong>${teacherReadyTickets().length}</strong></div></div><p class="kiosk-summary-note">${icon("info")} Your ticket number will be called at ${esc(state.session.station)}.</p></aside>
     </main><footer class="kiosk-footer"><span>${icon("calendar")} ${dateLabel()}</span><span>Need assistance? Please ask a staff member.</span><span>${icon("lock")} Secure enrollment queue</span></footer>
   </div>`;
 }
 
+function roomQueueView() {
+  const rooms = [...new Set([...(state.rooms || []), ...Object.values(demoRoomMappings), ...state.tickets.map((ticket) => ticket.roomLabel).filter(Boolean)])].sort();
+  const queue = step2QueueForRoom(activeRoom);
+  const current = queue.find((ticket) => ["CALLED", "IN_SERVICE"].includes(ticket.step2Status));
+  const waiting = queue.filter((ticket) => ticket.step2Status === "WAITING");
+  const recentlyCompleted = state.tickets.filter((ticket) => ticket.roomLabel === activeRoom && ticket.step2Status === "DONE")
+    .sort((a, b) => (b.step2CompletedAt || "").localeCompare(a.step2CompletedAt || "" )).slice(0, 5);
+  const queueRows = waiting.length ? waiting.map((ticket, index) => `<tr><td><span class="queue-order">#${String(ticket.queueOrder).padStart(3, "0")}</span></td><td><span class="queue-code">${esc(ticket.publicCode)}</span><span class="queue-meta">${esc(ticket.grade || "Student")} · ${esc(ticket.track || "Track not recorded")}</span></td><td>${relativeTime(ticket.createdAt)}</td><td><span class="status-chip waiting">Waiting</span></td><td>${index === 0 ? "Next" : "In line"}</td></tr>`).join("") : `<tr class="queue-empty-row"><td colspan="5">No students are waiting for this room.</td></tr>`;
+  const content = `<div class="page-heading"><div><p class="eyebrow">Step 2 · ${esc(activeRoom)}</p><h1>Room queue</h1><p class="page-subtitle">Call students in ticket order. The app selects the earliest waiting ticket so later arrivals cannot be called ahead.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span><button class="button button-secondary" data-action="open-step2-display">${icon("display")}Open this room’s display</button></div></div>
+    <section class="panel room-queue-toolbar"><div><label class="room-queue-select-label" for="room-queue-select">Track room</label><select class="room-queue-select" id="room-queue-select">${rooms.map((room) => `<option value="${esc(room)}" ${activeRoom === room ? "selected" : ""}>${esc(room)}</option>`).join("")}</select></div><div class="room-queue-count"><span>${waiting.length}</span><small>waiting in this room</small></div></section>
+    <section class="room-current-card ${current ? "has-current" : ""}"><div class="room-current-heading"><span class="eyebrow">${current ? "NOW BEING HELPED" : "CURRENT TICKET"}</span><span class="room-current-state">${current ? "In service" : "Room available"}</span></div>${current ? `<div class="room-current-ticket"><strong>${esc(current.publicCode)}</strong><span>${esc(current.grade || "Student")} · ${esc(current.track || "Track not recorded")}</span><small>Arrived ${relativeTime(current.createdAt)}${current.step2CalledAt ? ` · Called ${timeLabel(current.step2CalledAt)}` : ""}</small></div><div class="room-current-actions"><button class="button button-primary" data-action="step2-complete">${icon("check")}Finish student</button><button class="button button-secondary" data-action="step2-skip">${icon("skip")}No-show, call next</button></div>` : `<div class="room-current-empty"><div><h2>${waiting.length ? "Ready for the next student?" : "No one is waiting."}</h2><p>${waiting.length ? `The next ticket is ${esc(waiting[0].publicCode)}. Call them when the teacher is ready.` : "Newly routed Step 1 tickets will appear here."}</p></div><button class="button button-primary room-call-next" data-action="step2-call-next" ${waiting.length ? "" : "disabled"}>${icon("bell")}Call next ticket</button></div>`}</section>
+    <section class="panel room-queue-list"><div class="panel-head"><div><h2 class="panel-title">Waiting order <span class="room-queue-count-badge">${waiting.length}</span></h2><p class="panel-subtitle">Sorted by original ticket order. Staff cannot choose a later ticket.</p></div></div><div class="room-queue-table-wrap"><table class="queue-table room-queue-table"><thead><tr><th>Queue</th><th>Ticket</th><th>Waiting</th><th>Status</th><th>Position</th></tr></thead><tbody>${queueRows}</tbody></table></div></section>
+    <section class="panel room-recent-list"><div class="panel-head"><div><h2 class="panel-title">Recently helped</h2><p class="panel-subtitle">Recent tickets completed in ${esc(activeRoom)}.</p></div></div><div class="room-recent-codes">${recentlyCompleted.length ? recentlyCompleted.map((ticket) => `<span><strong>${esc(ticket.publicCode)}</strong><small>${timeLabel(ticket.step2CompletedAt)}</small></span>`).join("") : `<p>No tickets completed in this room yet.</p>`}</div></section>`;
+  return shell(content, "room-queue");
+}
+
 function displayView() {
-  const ticket = currentTicket();
-  const called = state.events.filter((event) => event.type === "TICKET_CALLED").slice(0, 3);
-  const callMessage = ticket?.status === "CALLED" ? `Ticket ${esc(ticket.publicCode)}, please proceed to ${esc(state.session.station)}.` : ticket ? `Ticket ${esc(ticket.publicCode)} is at the teacher meeting.` : "No one waiting — the queue is clear.";
-  const view = `<div class="display-page ${ticket ? "" : "display-empty"}"><header class="display-header"><div class="display-brand"><span class="brand-mark">${icon("sparkle")}</span><span>ENROLL · PUBLIC DISPLAY</span></div><div class="display-header-actions"><button class="button" data-action="toggle-speech" aria-pressed="${displaySpeechEnabled}">${icon(displaySpeechEnabled ? "speaker" : "mute")}<span>${displaySpeechEnabled ? "Announcements on" : "Enable announcements"}</span></button><button class="button" data-action="fullscreen">${icon("expand")}<span>Full screen</span></button><button class="button" data-action="back-dashboard">${icon("dashboard")}<span>Staff view</span></button></div></header><main class="display-main"><div class="display-overline">${icon("broadcast")} Step 1 · Teacher queue</div><h1>Now serving</h1><p class="display-station">${esc(state.session.station)} <span aria-hidden="true">·</span> ${esc(state.session.name)}</p><section class="display-ticket-card" aria-live="polite"><span class="display-label">Please proceed to the teacher station</span><span class="display-code ${ticket ? "updated" : ""}" id="display-code">${ticket ? esc(ticket.publicCode) : ""}</span><p class="display-message" id="display-message">${callMessage}</p><div class="display-meta"><span>${icon("pin")} ${esc(state.session.station)}</span><span>${icon("users")} ${teacherReadyTickets().length} ready for Step 1</span></div></section></main><footer class="display-bottom"><span class="display-connection">${cloudMode ? "Live shared queue connected" : "This browser demo is connected"}</span><span>Last called ${called[0] ? `<strong>${esc(called[0].ticketCode)} · ${timeLabel(called[0].createdAt)}</strong>` : "—"}</span></footer></div>`;
-  return view;
+  const step2 = currentView() === "display-step2";
+  const step = step2 ? 2 : 1;
+  const ticket = step2 ? null : currentTicket();
+  const roomQueue = step2 ? step2QueueForRoom(activeRoom) : [];
+  const currentStep2Ticket = roomQueue.find((item) => ["CALLED", "IN_SERVICE"].includes(item.step2Status));
+  const nextStep2Ticket = roomQueue.find((item) => item.step2Status === "WAITING");
+  const roomLabel = step2 ? activeRoom : "";
+  const displayCode = step2 ? currentStep2Ticket?.publicCode || "" : ticket?.publicCode || "";
+  const hasDisplayItem = step2 ? Boolean(currentStep2Ticket) : Boolean(ticket);
+  const recent = state.events.find((event) => step2 ? event.type === "STEP2_TICKET_CALLED" && event.roomLabel === activeRoom : event.type === "TICKET_CALLED") || null;
+  const message = step2
+    ? hasDisplayItem ? `Ticket ${esc(displayCode)}, the teacher is ready for you in ${esc(roomLabel)}.` : nextStep2Ticket ? `Next ticket ${esc(nextStep2Ticket.publicCode)}. Please wait for your number to be called.` : `No tickets are waiting in ${esc(roomLabel)}.`
+    : ticket?.status === "CALLED" ? `Ticket ${esc(ticket.publicCode)}, please proceed to ${esc(state.session.station)}.` : ticket ? `Ticket ${esc(ticket.publicCode)} is at the teacher meeting.` : "No one waiting — the Step 1 queue is clear.";
+  const displayLabel = step2 ? hasDisplayItem ? "Now being helped" : "Waiting for your ticket" : "Please proceed to the teacher station";
+  const stationLabel = step2 ? `Step 2 · ${activeRoom}` : state.session.station;
+  const countLabel = step2 ? `${roomQueue.filter((item) => item.step2Status === "WAITING").length} waiting in this room` : `${teacherReadyTickets().length} ready for Step 1`;
+  const switchAction = step2 ? "open-step1-display" : "open-step2-display";
+  const switchLabel = step2 ? "Step 1 display" : "Step 2 display";
+  return `<div class="display-page ${step2 ? "display-step-two" : ""} ${hasDisplayItem ? "" : "display-empty"}"><header class="display-header"><div class="display-brand"><span class="brand-mark">${icon("sparkle")}</span><span>ENROLL · PUBLIC DISPLAY</span></div><div class="display-header-actions"><button class="button" data-action="toggle-speech" aria-pressed="${displaySpeechEnabled}">${icon(displaySpeechEnabled ? "speaker" : "mute")}<span>${displaySpeechEnabled ? "Announcements on" : "Enable announcements"}</span></button><button class="button" data-action="${switchAction}">${icon("display")}<span>${switchLabel}</span></button><button class="button" data-action="fullscreen">${icon("expand")}<span>Full screen</span></button><button class="button" data-action="back-dashboard">${icon("dashboard")}<span>Staff view</span></button></div></header><main class="display-main"><div class="display-overline">${icon("broadcast")} Step ${step} · ${step2 ? `${esc(activeRoom)} room queue` : "Teacher queue"}</div><h1>${step2 ? hasDisplayItem ? "Now serving" : "Room queue" : "Now serving"}</h1><p class="display-station">${esc(stationLabel)} <span aria-hidden="true">·</span> ${esc(state.session.name)}</p><section class="display-ticket-card" aria-live="polite"><span class="display-label">${displayLabel}</span><span class="display-code ${hasDisplayItem ? "updated" : ""}" id="display-code">${hasDisplayItem ? esc(displayCode) : ""}</span>${step2 && hasDisplayItem ? `<strong class="display-room-label">${esc(roomLabel)}</strong>` : ""}<p class="display-message" id="display-message">${message}</p><div class="display-meta"><span>${icon("pin")} ${esc(stationLabel)}</span><span>${icon("users")} ${countLabel}</span></div></section></main><footer class="display-bottom"><span class="display-connection">${cloudMode ? "Live shared queue connected" : "This browser demo is connected"}</span><span>Last called ${recent ? `<strong>${esc(recent.ticketCode)} · ${timeLabel(recent.createdAt)}</strong>` : "—"}</span></footer></div>`;
 }
 
 function setupView() {
   const isActive = state.session.status === "ACTIVE";
   const isPaused = state.session.status === "PAUSED";
-  const content = `<div class="page-heading"><div><p class="eyebrow">Manage enrollment</p><h1>Session setup</h1><p class="page-subtitle">Configure today’s session and service counter.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span></div></div><div class="setup-wrap"><form class="view-card setup-form" id="setup-form"><h2>Session details</h2><p>These details are shown on student tickets and the public display.</p><div class="form-group"><label for="session-name">Session name</label><input id="session-name" name="sessionName" maxlength="60" value="${esc(state.session.name)}" required /><span class="form-help">A short label students can recognize.</span></div><div class="form-group"><label for="station-name">Station label</label><input id="station-name" name="stationName" maxlength="60" value="${esc(state.session.station)}" required /><span class="form-help">For example: Step 1 — Counter 1.</span></div><div class="form-actions"><button class="button button-primary" type="submit">${icon("save")}Save changes</button><button class="button button-secondary" type="button" data-nav="dashboard">Back to queue</button></div></form><aside class="view-card setup-info"><h2>Session controls</h2><p>${isActive ? "Pause ticket requests while keeping the queue and current service intact." : isPaused ? "Resume ticket requests when the enrollment desk is ready." : "This session is closed. You can still review the queue history."}</p><div class="session-controls">${isActive ? `<button class="button button-secondary" data-action="pause-session">${icon("pause")}Pause ticket requests</button>` : isPaused ? `<button class="button button-primary" data-action="resume-session">${icon("play")}Resume ticket requests</button>` : `<button class="button button-secondary" disabled>${icon("close")}Session closed</button>`}<button class="button button-secondary" data-action="open-display">${icon("display")}Open public display</button>${state.session.status !== "CLOSED" ? `<button class="button button-quiet" data-action="confirm-close">${icon("close")}Close session</button>` : ""}</div><div class="setup-note">${cloudMode ? "Session settings are shared through Supabase and protected by staff sign-in." : "This local demo saves changes in this browser only. Staff sign-in, persistent database storage, and server-side permissions must be connected before real enrollment data is used."}</div></aside></div>`;
+  const content = `<div class="page-heading"><div><p class="eyebrow">Manage enrollment</p><h1>Session setup</h1><p class="page-subtitle">Configure today’s session and service counter.</p></div><div class="heading-actions"><span class="session-indicator ${activeSessionClass()}">${sessionStatusLabel()}</span></div></div><div class="setup-wrap"><form class="view-card setup-form" id="setup-form"><h2>Session details</h2><p>These details are shown on student tickets and the two public displays.</p><div class="form-group"><label for="session-name">Session name</label><input id="session-name" name="sessionName" maxlength="60" value="${esc(state.session.name)}" required /><span class="form-help">A short label students can recognize.</span></div><div class="form-group"><label for="station-name">Step 1 station label</label><input id="station-name" name="stationName" maxlength="60" value="${esc(state.session.station)}" required /><span class="form-help">For example: Step 1 — Teacher Station.</span></div><div class="form-actions"><button class="button button-primary" type="submit">${icon("save")}Save changes</button><button class="button button-secondary" type="button" data-nav="dashboard">Back to queue</button></div></form><aside class="view-card setup-info"><h2>Session controls</h2><p>${isActive ? "Pause ticket requests while keeping the queue and current service intact." : isPaused ? "Resume ticket requests when the enrollment desk is ready." : "This session is closed. You can still review the queue history."}</p><div class="session-controls">${isActive ? `<button class="button button-secondary" data-action="pause-session">${icon("pause")}Pause ticket requests</button>` : isPaused ? `<button class="button button-primary" data-action="resume-session">${icon("play")}Resume ticket requests</button>` : `<button class="button button-secondary" disabled>${icon("close")}Session closed</button>`}<button class="button button-secondary" data-action="open-step1-display">${icon("display")}Open Step 1 display</button><button class="button button-secondary" data-action="open-step2-display">${icon("display")}Open Step 2 display</button>${state.session.status !== "CLOSED" ? `<button class="button button-quiet" data-action="confirm-close">${icon("close")}Close session</button>` : ""}</div><div class="setup-note">${cloudMode ? "Session settings are shared through Supabase and protected by staff sign-in." : "This local demo saves changes in this browser only. Staff sign-in, persistent database storage, and server-side permissions must be connected before real enrollment data is used."}</div></aside></div>`;
   return shell(content, "setup");
 }
 
@@ -802,9 +892,11 @@ function adminView() {
 
 function render() {
   const view = currentView();
-  document.body.classList.toggle("display-mode", view === "display");
+  const publicDisplay = ["display", "display-step2"].includes(view);
+  syncDisplaySettings(view);
+  document.body.classList.toggle("display-mode", publicDisplay);
   document.body.classList.toggle("kiosk-mode", view === "ticket");
-  document.title = `${view === "display" ? "Public display" : esc(VIEW_NAMES[view])} · Enroll`;
+  document.title = `${esc(VIEW_NAMES[view])} · Enroll`;
   if (cloudMode && remoteStatus !== "ready") {
     app.innerHTML = connectionView();
     bindCloudGateEvents();
@@ -815,7 +907,7 @@ function render() {
     bindPasswordSetupEvents();
     return;
   }
-  if (cloudMode && !["ticket", "display"].includes(view) && (!remoteAuthSession || !remoteStaffRole)) {
+  if (cloudMode && !["ticket", "display", "display-step2"].includes(view) && (!remoteAuthSession || !remoteStaffRole)) {
     app.innerHTML = staffAuthView();
     bindCloudGateEvents();
     return;
@@ -825,13 +917,13 @@ function render() {
     bindCloudGateEvents();
     return;
   }
-  app.innerHTML = view === "dashboard" ? dashboardView() : view === "ticket" ? ticketView() : view === "display" ? displayView() : view === "admin" ? adminView() : setupView();
+  app.innerHTML = view === "dashboard" ? dashboardView() : view === "ticket" ? ticketView() : publicDisplay ? displayView() : view === "room-queue" ? roomQueueView() : view === "admin" ? adminView() : setupView();
   bindViewEvents(view);
-  if (view === "display") observeAnnouncement();
+  if (publicDisplay) observeAnnouncement(activeDisplayStep);
 }
 
-function recordEvent(type, ticketCode = "") {
-  const event = { id: makeId(), type, ticketCode, createdAt: new Date().toISOString() };
+function recordEvent(type, ticketCode = "", roomLabel = null) {
+  const event = { id: makeId(), type, ticketCode, roomLabel, createdAt: new Date().toISOString() };
   state.events.unshift(event);
   state.events = state.events.slice(0, 100);
   return event;
@@ -858,11 +950,12 @@ function makePublicCode() {
 function issueTicket(selection = kioskDraft) {
   if (state.session.status !== "ACTIVE") return showToast("Ticket requests are not available right now.", "error");
   if (getMyTicket()) return showToast("You already have a ticket on this device.");
-  if (!selection.documentsChecked || !selection.orientationComplete) return showToast("Complete document check and orientation before getting a Step 1 ticket.", "error");
+  if (!selection.documentsChecked || !selection.orientationComplete || !selection.brigadaComplete) return showToast("Complete document check, orientation, and Brigada before getting a Step 1 ticket.", "error");
   if (!selection.grade || !selection.pathway || !selection.track) return showToast("Choose a grade and track before getting a ticket.", "error");
   if (cloudMode) return runRemoteTicketIssue(selection);
   try {
-    const ticket = { id: makeId(), publicCode: makePublicCode(), queueOrder: state.nextQueueOrder++, status: "WAITING", grade: `Grade ${selection.grade}`, pathway: selection.pathway === "academic" ? "Academic track" : "TechPro", track: selection.track, progress: { documentsChecked: true, orientationComplete: true, teacherComplete: false, brigadaComplete: false, roomAssigned: false, teacherCompletedAt: null, brigadaCompletedAt: null }, callCount: 0, createdAt: new Date().toISOString(), calledAt: null, serviceStartedAt: null, completedAt: null };
+    const createdAt = new Date().toISOString();
+    const ticket = { id: makeId(), publicCode: makePublicCode(), queueOrder: state.nextQueueOrder++, status: "WAITING", grade: `Grade ${selection.grade}`, pathway: selection.pathway === "academic" ? "Academic track" : "TechPro", track: selection.track, progress: { documentsChecked: true, orientationComplete: true, brigadaComplete: true, brigadaCompletedAt: createdAt, teacherComplete: false, roomAssigned: false, teacherCompletedAt: null }, callCount: 0, createdAt, calledAt: null, serviceStartedAt: null, completedAt: null };
     state.tickets.push(ticket);
     sessionStorage.setItem("enroll-my-ticket", ticket.id);
     recordEvent("TICKET_CREATED", ticket.publicCode);
@@ -880,7 +973,7 @@ function callNext({ fromCompletion = false } = {}) {
   const next = teacherReadyTickets()[0];
   if (!next) {
     if (fromCompletion) { state.currentTicketId = null; persistState(); }
-    return showToast(waitingTickets().length ? "Complete document check and orientation before the teacher meeting." : "No one is waiting right now.");
+    return showToast(waitingTickets().length ? "Finish all preparation checks before the teacher meeting." : "No one is waiting right now.");
   }
   next.status = "CALLED";
   next.calledAt = new Date().toISOString();
@@ -904,9 +997,23 @@ function startService() {
 
 function completeAndCallNext() {
   if (cloudMode) {
+    const completedTicketId = currentTicket()?.id || null;
     const completedCode = currentTicket()?.publicCode || "Ticket";
-    return runRemoteAction("complete_teacher").then((ok) => {
-      if (ok) showToast(`${completedCode} completed the teacher meeting. Brigada is still required to finish Step 1.${currentTicket() ? ` ${currentTicket().publicCode} is next.` : ""}`);
+    return runRemoteAction("complete_teacher").then(async (ok) => {
+      if (!ok) return;
+      try {
+        let completedTicket = state.tickets.find((ticket) => ticket.id === completedTicketId);
+        if (!completedTicket?.roomLabel) {
+          const { error } = await supabaseClient.rpc("route_completed_ticket_to_step2", { p_ticket_id: completedTicketId });
+          if (error) throw error;
+          await refreshRemoteState(false);
+          render();
+          completedTicket = state.tickets.find((ticket) => ticket.id === completedTicketId);
+        }
+        showToast(`${completedCode} completed Step 1.${completedTicket?.roomLabel ? ` Send them to ${completedTicket.roomLabel} for classroom assignment.` : " The student is ready for Step 2."}${currentTicket() ? ` ${currentTicket().publicCode} is next.` : ""}`);
+      } catch (error) {
+        showToast(`Step 1 is complete, but Step 2 routing failed: ${backendErrorMessage(error)}`, "error");
+      }
     });
   }
   const ticket = currentTicket();
@@ -915,7 +1022,12 @@ function completeAndCallNext() {
   ticket.progress.teacherComplete = true;
   ticket.completedAt = new Date().toISOString();
   ticket.progress.teacherCompletedAt = ticket.completedAt;
+  ticket.roomLabel = demoRoomMappings[ticket.track] || "Room 1";
+  ticket.progress.roomAssigned = true;
+  ticket.progress.roomAssignedAt = ticket.completedAt;
+  ticket.step2Status = ticket.step2Status || "WAITING";
   recordEvent("TEACHER_MEETING_COMPLETED", ticket.publicCode);
+  recordEvent("ROOM_ASSIGNED", ticket.publicCode, ticket.roomLabel);
   state.currentTicketId = null;
   const next = teacherReadyTickets()[0];
   if (next) {
@@ -926,36 +1038,7 @@ function completeAndCallNext() {
     recordEvent("TICKET_CALLED", next.publicCode);
   }
   persistState();
-  showToast(`${ticket.publicCode} completed the teacher meeting. Brigada is still required to finish Step 1.${next ? ` ${next.publicCode} is next.` : ""}`);
-}
-
-function advancePostTeacherStage(ticketId, stage) {
-  if (cloudMode) {
-    const ticket = state.tickets.find((item) => item.id === ticketId);
-    const code = ticket?.publicCode || "Ticket";
-    const action = stage === "brigada" ? "complete_brigada" : "assign_room";
-    return runRemoteAction(action, ticketId).then((ok) => {
-      if (!ok) return;
-      const updated = state.tickets.find((item) => item.id === ticketId);
-      showToast(stage === "brigada" ? `${code} completed Brigada. Step 1 is complete; the ticket is ready for Step 2 room assignment.` : `${code} is assigned to ${updated?.roomLabel || "its room"}.`);
-    });
-  }
-  const ticket = state.tickets.find((item) => item.id === ticketId);
-  if (!ticket || processStage(ticket) !== stage) return showToast("This ticket isn’t ready for that sign-off.", "error");
-  if (stage === "room" && !isFirstAtStage(ticket, stage)) return showToast("Please assign the earlier eligible ticket first.", "error");
-  if (stage === "brigada") {
-    ticket.progress.brigadaComplete = true;
-    ticket.progress.brigadaCompletedAt = new Date().toISOString();
-    recordEvent("BRIGADA_COMPLETED", ticket.publicCode);
-    persistState();
-    return showToast(`${ticket.publicCode} completed Brigada. Step 1 is complete; the ticket is ready for Step 2 room assignment.`);
-  }
-  if (stage === "room") {
-    ticket.progress.roomAssigned = true;
-    recordEvent("ROOM_ASSIGNED", ticket.publicCode);
-    persistState();
-    return showToast(`A room has been assigned to ${ticket.publicCode}.`);
-  }
+  showToast(`${ticket.publicCode} completed Step 1. Direct the student to ${ticket.roomLabel} for classroom assignment.${next ? ` ${next.publicCode} is next.` : ""}`);
 }
 
 function recallCurrent() {
@@ -1046,6 +1129,8 @@ function bindViewEvents(view) {
   }));
   const search = document.getElementById("queue-search");
   if (search) search.addEventListener("input", () => { searchQuery = search.value; updateQueueRows(); });
+  const roomSelect = document.getElementById("room-queue-select");
+  if (roomSelect) roomSelect.addEventListener("change", () => setActiveRoom(roomSelect.value));
   const form = document.getElementById("setup-form");
   if (form) form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1062,7 +1147,7 @@ function bindViewEvents(view) {
     persistState();
     showToast("Session details saved.");
   });
-  if (view === "display") {
+  if (["display", "display-step2"].includes(view)) {
     const code = document.getElementById("display-code");
     if (code) requestAnimationFrame(() => code.classList.add("updated"));
   }
@@ -1076,7 +1161,7 @@ function handleKioskAction(action, value = "") {
       render();
       break;
     case "toggle-prerequisite":
-      if (value === "documentsChecked" || value === "orientationComplete") kioskDraft[value] = !kioskDraft[value];
+      if (["documentsChecked", "orientationComplete", "brigadaComplete"].includes(value)) kioskDraft[value] = !kioskDraft[value];
       render();
       break;
     case "select-pathway":
@@ -1095,7 +1180,7 @@ function handleKioskAction(action, value = "") {
       render();
       break;
     case "continue":
-      if (kioskDraft.step === "prerequisites" && kioskDraft.documentsChecked && kioskDraft.orientationComplete) kioskDraft.step = "grade";
+      if (kioskDraft.step === "prerequisites" && kioskDraft.documentsChecked && kioskDraft.orientationComplete && kioskDraft.brigadaComplete) kioskDraft.step = "grade";
       else if (kioskDraft.step === "grade" && kioskDraft.grade) kioskDraft.step = kioskDraft.grade === "11" ? "pathway" : "track";
       else if (kioskDraft.step === "pathway" && kioskDraft.pathway) kioskDraft.step = "track";
       else if (kioskDraft.step === "track" && kioskDraft.track) kioskDraft.step = "review";
@@ -1113,6 +1198,63 @@ function handleKioskAction(action, value = "") {
   }
 }
 
+function openPublicDisplay(step = 1) {
+  const displayUrl = new URL(location.href);
+  displayUrl.searchParams.set("view", step === 2 ? "display-step2" : "display");
+  const opened = window.open(`${displayUrl.pathname}${displayUrl.search}`, "_blank");
+  if (!opened) showToast("Your browser blocked the new tab. Use the public display links in the sidebar.", "error");
+}
+
+async function step2RoomAction(action) {
+  if (cloudMode) {
+    if (remoteActionPending) return;
+    remoteActionPending = true;
+    try {
+      const { error } = await supabaseClient.rpc("step2_room_action", { p_action: action, p_room_label: activeRoom });
+      if (error) throw error;
+      await refreshRemoteState(false);
+      render();
+    } catch (error) {
+      showToast(backendErrorMessage(error), "error");
+    } finally {
+      remoteActionPending = false;
+    }
+    return;
+  }
+  const queue = step2QueueForRoom(activeRoom);
+  const current = queue.find((ticket) => ["CALLED", "IN_SERVICE"].includes(ticket.step2Status));
+  if (action === "call_next") {
+    if (current) return showToast(`${current.publicCode} is already being helped in ${activeRoom}.`, "error");
+    const next = queue.find((ticket) => ticket.step2Status === "WAITING");
+    if (!next) return showToast(`No tickets are waiting in ${activeRoom}.`, "error");
+    next.step2Status = "IN_SERVICE";
+    next.step2CalledAt = new Date().toISOString();
+    recordEvent("STEP2_TICKET_CALLED", next.publicCode, activeRoom);
+    persistState();
+    showToast(`${next.publicCode} is now being helped in ${activeRoom}.`);
+  } else if (action === "complete_current") {
+    if (!current) return showToast("There is no current Step 2 ticket to finish.", "error");
+    current.step2Status = "DONE";
+    current.step2CompletedAt = new Date().toISOString();
+    recordEvent("STEP2_TICKET_COMPLETED", current.publicCode, activeRoom);
+    persistState();
+    showToast(`${current.publicCode} is finished in ${activeRoom}. Call the next ticket when ready.`);
+  } else if (action === "skip_current") {
+    if (!current) return showToast("There is no current Step 2 ticket to skip.", "error");
+    current.step2Status = "SKIPPED";
+    current.step2SkippedAt = new Date().toISOString();
+    recordEvent("STEP2_TICKET_SKIPPED", current.publicCode, activeRoom);
+    const next = step2QueueForRoom(activeRoom).find((ticket) => ticket.step2Status === "WAITING");
+    if (next) {
+      next.step2Status = "IN_SERVICE";
+      next.step2CalledAt = new Date().toISOString();
+      recordEvent("STEP2_TICKET_CALLED", next.publicCode, activeRoom);
+    }
+    persistState();
+    showToast(next ? `${current.publicCode} was skipped. ${next.publicCode} is next in ${activeRoom}.` : `${current.publicCode} was skipped. No one else is waiting.`);
+  }
+}
+
 function handleAction(action, ticketId = "") {
   switch (action) {
     case "open-menu": mobileMenuOpen = true; render(); break;
@@ -1121,26 +1263,24 @@ function handleAction(action, ticketId = "") {
     case "call-next": callNext(); break;
     case "start-service": startService(); break;
     case "complete-next": completeAndCallNext(); break;
-    case "complete-brigada": advancePostTeacherStage(ticketId, "brigada"); break;
-    case "assign-room": advancePostTeacherStage(ticketId, "room"); break;
+    case "step2-call-next": step2RoomAction("call_next"); break;
+    case "step2-complete": step2RoomAction("complete_current"); break;
+    case "step2-skip": askForConfirmation({ title: "Mark this student as a no-show?", copy: "This will record the current Step 2 ticket as skipped and call the next student in this room’s line.", confirmLabel: "Skip & call next", action: () => step2RoomAction("skip_current") }); break;
     case "recall": recallCurrent(); break;
     case "confirm-skip": askForConfirmation({ title: "Skip this ticket?", copy: "This will mark the current ticket as a no-show, keep it in the event history, and call the next student if someone is waiting.", confirmLabel: "Skip & call next", action: skipCurrent }); break;
     case "pause-session": setSessionStatus("PAUSED"); break;
     case "resume-session": setSessionStatus("ACTIVE"); break;
     case "confirm-close": askForConfirmation({ title: "Close this session?", copy: "Students will no longer be able to request tickets. You can still review the queue, but this session can’t be reopened in the demo.", confirmLabel: "Close session", action: () => setSessionStatus("CLOSED") }); break;
-    case "open-display": {
-      const displayUrl = new URL(location.href); displayUrl.searchParams.set("view", "display");
-      const opened = window.open(`${displayUrl.pathname}${displayUrl.search}`, "_blank");
-      if (!opened) showToast("Your browser blocked the new tab. Use Public display from the sidebar.", "error");
-      break;
-    }
+    case "open-display":
+    case "open-step1-display": openPublicDisplay(1); break;
+    case "open-step2-display": openPublicDisplay(2); break;
     case "back-dashboard": goToView("dashboard"); break;
     case "get-ticket": issueTicket(); break;
     case "kiosk-help": showToast("If you’re unsure which track to choose, please ask an enrollment staff member."); break;
     case "print-ticket": window.print(); break;
     case "new-student":
       sessionStorage.removeItem("enroll-my-ticket");
-      kioskDraft = { grade: "", pathway: "", track: "", documentsChecked: false, orientationComplete: false, step: "prerequisites" };
+      kioskDraft = { grade: "", pathway: "", track: "", documentsChecked: false, orientationComplete: false, brigadaComplete: false, step: "prerequisites" };
       kioskTrackFilter = "academic";
       render();
       break;
@@ -1157,11 +1297,11 @@ function handleAction(action, ticketId = "") {
 function toggleSpeech() {
   if (!("speechSynthesis" in window)) return showToast("Speech announcements aren’t available in this browser.", "error");
   displaySpeechEnabled = !displaySpeechEnabled;
-  sessionStorage.setItem("enroll-speech-enabled", String(displaySpeechEnabled));
+  sessionStorage.setItem(`enroll-speech-enabled-step-${activeDisplayStep}`, String(displaySpeechEnabled));
   if (displaySpeechEnabled) {
-    lastSeenAnnouncement = announcementEvent()?.id || "";
-    sessionStorage.setItem("enroll-last-announcement", lastSeenAnnouncement);
-    showToast("Announcements enabled for new calls.");
+    lastSeenAnnouncement = announcementEvent(activeDisplayStep)?.id || "";
+    sessionStorage.setItem(`enroll-last-announcement-step-${activeDisplayStep}`, lastSeenAnnouncement);
+    showToast(activeDisplayStep === 2 ? `Announcements enabled for ticket calls in ${activeRoom}.` : "Announcements enabled for new teacher calls.");
   } else {
     window.speechSynthesis.cancel();
     showToast("Announcements turned off.");
@@ -1174,13 +1314,16 @@ function toggleFullscreen() {
   else document.exitFullscreen?.();
 }
 
-function observeAnnouncement() {
+function observeAnnouncement(step = activeDisplayStep) {
   if (!displaySpeechEnabled || !("speechSynthesis" in window)) return;
-  const event = announcementEvent();
-  if (!event || event.id === lastSeenAnnouncement || (event.type !== "TICKET_CALLED" && event.type !== "TICKET_RECALLED")) return;
+  const event = announcementEvent(step);
+  if (!event || event.id === lastSeenAnnouncement) return;
   lastSeenAnnouncement = event.id;
-  sessionStorage.setItem("enroll-last-announcement", event.id);
-  const utterance = new SpeechSynthesisUtterance(`Ticket ${event.ticketCode}, please proceed to ${state.session.station}.`);
+  sessionStorage.setItem(`enroll-last-announcement-step-${step}`, event.id);
+  const message = step === 2
+    ? `Ticket ${event.ticketCode}, please come to the teacher in ${event.roomLabel || activeRoom}.`
+    : `Ticket ${event.ticketCode}, please proceed to ${state.session.station}.`;
+  const utterance = new SpeechSynthesisUtterance(message);
   utterance.rate = 0.93;
   utterance.pitch = 1;
   window.speechSynthesis.cancel();
@@ -1204,4 +1347,9 @@ window.addEventListener("pageshow", () => {
   if (cloudMode && remoteStatus === "ready") refreshRemoteState().catch(() => {});
   else { state = loadState(); render(); }
 });
+setInterval(() => {
+  if (cloudMode && remoteStatus === "ready" && !document.hidden && ["ticket", "display", "display-step2", "room-queue"].includes(currentView())) {
+    refreshRemoteState().catch(() => {});
+  }
+}, 5000);
 initializeBackend();
